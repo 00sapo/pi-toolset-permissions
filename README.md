@@ -60,7 +60,7 @@ Run `/permissions`. The main page shows the three flags, the scope, and three pa
 | esc | return to the main page, or close the screen |
 
 The paths page lists the project root and the extra paths.
-Press `a` to add a directory. The extension checks that the path is an existing directory.
+Press `a` to add a directory. The extension checks that the path is an existing directory, and it stores the resolved path, so a symlink cannot widen the scope more than the dialog shows.
 Press `d` to remove the selected extra path. The project root cannot be removed.
 
 The toolsets page lists the three builtin toolsets, marked `builtin`, and the custom toolsets.
@@ -99,19 +99,25 @@ The extension refuses a change when the session has no dialog interface, for exa
 1. No toolset matches the tool name: the call is blocked and the reason asks for a new toolset.
 2. The risk flag of the match is off: the call is blocked and the reason names the flag.
 3. A read or write call names a path outside the allowed roots: the call is blocked.
-4. An execute call can change files while the write flag is off: the call is blocked.
+4. An execute call can change files while the write flag is off or the read-only sandbox is on: the call is blocked.
 5. An execute call can reach the network while the no-network sandbox is on: the call is blocked.
 6. An execute call names a path outside the allowed roots in project scope: the call is blocked.
+7. An execute call has no command argument the gate can read, while bash must stay read only: the call is blocked.
+
+The gate reads the `path`, `file_path`, `file`, `paths`, and `files` arguments, and the `command`, `cmd`, `script`, and `code` arguments.
+A read or write tool with no path argument passes the path scope check.
 
 The `permissions` tool always passes the gate. It asks the user itself.
 
 ## Sandboxes
 
 The bash read-only sandbox blocks commands that can change the filesystem.
-The list includes `rm`, `mv`, `cp`, `tee`, output redirection, `git commit`, `git push`, package installers, and `sudo`.
+The list includes `rm`, `mv`, `cp`, `tee`, output redirection, in-place edits with `sed -i` or `perl -pi`, `find -delete`, `find -exec`, `xargs`, `git commit`, `git push`, `git config`, package installers, and `sudo`.
+The check also reads the payload of `sh -c`, `bash -lc`, and `eval`, and treats a script run by an interpreter such as `python3 build.py` or `node -e` as a possible write.
+A version query such as `node --version` is not blocked. An operator inside quotes, such as `grep 'a>b' file`, is not a redirect. A redirect to `/dev/null` is not blocked.
 
 The bash no-network sandbox blocks commands that can reach the network.
-The list includes `curl`, `wget`, `ssh`, `scp`, `git clone`, `git pull`, `docker pull`, and `gh api`.
+The list includes `curl`, `wget`, `ssh`, `scp`, `git clone`, `git pull`, `docker pull`, `docker compose`, and `gh api`.
 
 While the write flag is off, bash must stay read only, also when the sandbox is off.
 
@@ -127,11 +133,13 @@ A missing file gives the default state. A corrupt file gives the default state t
 
 The bash checks are heuristics. They read the command text, not the behavior of the program.
 A wrapper script hides its content. A renamed network client escapes the list. A path built at run time escapes the scan.
+A command line that hides a command, such as `CMD=rm; $CMD -rf /`, also escapes the scan.
+A command longer than 8000 characters, or a command nested more than three shells deep, is blocked instead of checked.
 
 The operating system is the real boundary.
 User accounts, file permissions, containers, and network policy hold a process back.
 Use them for work that must stay contained.
 
-The path scope covers the `path` argument of read tools and write tools.
+The path scope covers the usual path arguments of read tools and write tools.
 A tool that takes a path in another argument is not checked by the path scope.
 Add a custom toolset only for tools that you trust.
