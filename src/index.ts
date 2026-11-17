@@ -1,7 +1,7 @@
 /** Wiring: state, the tool_call gate, the /permissions command, and the footer status. */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createBashTool } from "@earendil-works/pi-coding-agent";
+import { createBashTool, createPowerShellTool } from "@earendil-works/pi-coding-agent";
 import { evaluateCall } from "./gate.ts";
 import { wrapBash } from "./sandboxes.ts";
 import { MAX_TOOLSETS, StateStore } from "./state.ts";
@@ -133,6 +133,28 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				return tool.execute(toolCallId, params, signal, onUpdate);
 			},
 		});
+
+		// Native Windows has no sandbox backend. Cover the PowerShell tool too, so a
+		// sandbox never runs a shell command unsandboxed.
+		if (process.platform === "win32") {
+			const powershellDefinition = createPowerShellTool(process.cwd());
+			pi.registerTool({
+				...powershellDefinition,
+				promptSnippet: "Execute PowerShell commands",
+				async execute(toolCallId, params, signal, onUpdate, ctx) {
+					const plan = wrapBash(params.command, store.get());
+					if (plan !== null && "error" in plan) {
+						return {
+							content: [{ type: "text", text: plan.error }],
+							details: {},
+							isError: true,
+						};
+					}
+					const tool = createPowerShellTool(ctx.cwd);
+					return tool.execute(toolCallId, params, signal, onUpdate);
+				},
+			});
+		}
 
 		pi.registerCommand("permissions", {
 			description: "Tool permissions, scope, and sandboxes",
