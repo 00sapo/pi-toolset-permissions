@@ -40,9 +40,12 @@ export interface GatePatch {
 	path: string;
 }
 
+/** Why the gate blocked a call. `unknown` means no toolset matched. */
+export type BlockKind = "unknown" | "flag" | "scope" | "sandbox";
+
 export type GateDecision =
 	| { block: false; patch?: GatePatch }
-	| { block: true; reason: string };
+	| { block: true; reason: string; kind: BlockKind };
 
 export interface Classification {
 	risk: Risk;

@@ -1,21 +1,23 @@
-import type { GateDecision, PermissionsState, Risk } from "./types.ts";
+import type { BlockKind, GateDecision, PermissionsState, Risk } from "./types.ts";
 import { classify } from "./classify.ts";
 import { networkCommandReason, writeCommandReason } from "./sandboxes.ts";
-import { isAllowedPath, outsidePaths, resolvePath, scanBashPaths, stripAt } from "./scope.ts";
+import { isAllowedPath, resolvePath, stripAt } from "./scope.ts";
 
 export const PERMISSIONS_TOOL_NAME = "permissions";
 
 const MAX_REASON = 240;
 
-/** Argument names that hold a command line or a path. */
-const COMMAND_KEYS = ["command", "cmd", "script", "code"];
+/** Argument names that hold a path. */
 const PATH_KEYS = ["path", "file_path", "filePath", "file", "paths", "files"];
 
-function blocked(reason: string): GateDecision {
-	if (reason.length <= MAX_REASON) return { block: true, reason };
+/** Argument names that hold a command line. */
+const COMMAND_KEYS = ["command", "cmd", "script", "code"];
+
+function blocked(kind: BlockKind, reason: string): GateDecision {
+	if (reason.length <= MAX_REASON) return { block: true, kind, reason };
 	const head = reason.slice(0, MAX_REASON - 102);
 	const tail = reason.slice(-97);
-	return { block: true, reason: `${head} ... ${tail}` };
+	return { block: true, kind, reason: `${head} ... ${tail}` };
 }
 
 function stringValues(input: Record<string, unknown>, keys: string[]): string[] {
@@ -33,7 +35,7 @@ function stringValues(input: Record<string, unknown>, keys: string[]): string[] 
 }
 
 function noToolsetReason(toolName: string): string {
-	return `Blocked: no toolset matches the tool "${toolName}". Ask the user to add one, then call the permissions tool (action "add_toolset").`;
+	return `Blocked: no toolset matches the tool "${toolName}". Ask the user to allow it, or add a toolset with the permissions tool (action "add_toolset").`;
 }
 
 function flagReason(risk: Risk, toolName: string): string {
@@ -50,27 +52,12 @@ function pathReason(state: PermissionsState, cwd: string, value: string): string
 	return `Blocked: "${stripAt(value)}" resolves to ${resolvePath(cwd, value)}, outside the allowed roots: ${roots}. Ask the user to add the path or change the scope with the permissions tool.`;
 }
 
-function readOnlyCause(state: PermissionsState): string {
-	const causes: string[] = [];
-	if (!state.flags.write) causes.push("the write flag is off");
-	if (state.sandboxes.readonly_bash) causes.push("the read-only bash sandbox is on");
-	return causes.join(" and ");
-}
-
-function readOnlyReason(state: PermissionsState, detail: string): string {
-	return `Blocked: ${readOnlyCause(state)}, so bash must stay read-only, and ${detail}. Ask the user to change it with the permissions tool.`;
-}
-
-function networkReason(detail: string): string {
-	return `Blocked: the no-network sandbox is on and ${detail}. Ask the user to change it with the permissions tool (action "set_sandbox").`;
-}
-
-function bashScopeReason(paths: string[]): string {
-	return `Blocked: bash mentions paths outside the allowed roots: ${listPaths(paths)}. This scope check is a heuristic. Ask the user to add the path or change the scope with the permissions tool.`;
+function sandboxReason(sandbox: string, detail: string): string {
+	return `Blocked: the ${sandbox} sandbox is on and ${detail}. Ask the user to change it with the permissions tool (action "set_sandbox").`;
 }
 
 function noCommandReason(toolName: string): string {
-	return `Blocked: the execute tool "${toolName}" has no recognized command argument, so bash must stay read-only and the command cannot be checked. Ask the user to allow write tools with the permissions tool.`;
+	return `Blocked: the execute tool "${toolName}" has no recognized command argument, so a bash sandbox cannot check it. Ask the user to change the sandboxes with the permissions tool.`;
 }
 
 /** Decides whether a tool call may run. Pure: no I/O, no state changes. */
@@ -83,36 +70,29 @@ export function evaluateCall(
 	if (toolName === PERMISSIONS_TOOL_NAME) return { block: false };
 
 	const classification = classify(toolName, state.toolsets);
-	if (classification === null) return blocked(noToolsetReason(toolName));
+	if (classification === null) return blocked("unknown", noToolsetReason(toolName));
 
 	const risk = classification.risk;
-	if (!state.flags[risk]) return blocked(flagReason(risk, toolName));
+	if (!state.flags[risk]) return blocked("flag", flagReason(risk, toolName));
 
 	if (risk === "read" || risk === "write") {
 		for (const path of stringValues(input, PATH_KEYS)) {
-			if (!isAllowedPath(state, cwd, path)) return blocked(pathReason(state, cwd, path));
+			if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
 		}
 	}
 
-	if (risk === "execute") {
+	// Bash is one execute tool. The optional sandboxes are the finer layer.
+	if (risk === "execute" && (state.sandboxes.readonly_bash || state.sandboxes.no_network)) {
 		const commands = stringValues(input, COMMAND_KEYS);
-		const readOnly = state.sandboxes.readonly_bash || !state.flags.write;
-		if (commands.length === 0) {
-			if (readOnly) return blocked(noCommandReason(toolName));
-			return { block: false };
-		}
+		if (commands.length === 0) return blocked("sandbox", noCommandReason(toolName));
 		for (const command of commands) {
-			if (readOnly) {
+			if (state.sandboxes.readonly_bash) {
 				const detail = writeCommandReason(command);
-				if (detail !== null) return blocked(readOnlyReason(state, detail));
+				if (detail !== null) return blocked("sandbox", sandboxReason("read-only", detail));
 			}
 			if (state.sandboxes.no_network) {
 				const detail = networkCommandReason(command);
-				if (detail !== null) return blocked(networkReason(detail));
-			}
-			if (state.scope === "project") {
-				const outside = outsidePaths(state, cwd, scanBashPaths(command, cwd));
-				if (outside.length > 0) return blocked(bashScopeReason(outside));
+				if (detail !== null) return blocked("sandbox", sandboxReason("no-network", detail));
 			}
 		}
 	}

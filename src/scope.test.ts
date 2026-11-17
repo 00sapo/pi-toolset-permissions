@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { canonicalPath, isAllowedPath, resolveDirectory, isInside, outsidePaths, resolvePath, scanBashPaths, stripAt } from "./scope.ts";
+import { canonicalPath, isAllowedPath, resolveDirectory, isInside, resolvePath, stripAt } from "./scope.ts";
 import { defaultState } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 
@@ -147,100 +147,6 @@ test("everywhere allows any path", () => {
 	});
 });
 
-test("scanBashPaths finds absolute and relative paths", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("cat /etc/passwd", space.project), ["/etc/passwd"]);
-		assert.deepEqual(scanBashPaths("cat ../x", space.project), [resolve(space.project, "..", "x")]);
-		assert.deepEqual(scanBashPaths("cat ./a/b.txt", space.project), [join(space.project, "a", "b.txt")]);
-	});
-});
-
-test("scanBashPaths splits --flag=value", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("tool --file=/x", space.project), ["/x"]);
-		assert.deepEqual(scanBashPaths("tool --file=notes.txt", space.project), []);
-		assert.deepEqual(scanBashPaths("tool --verbose", space.project), []);
-	});
-});
-
-test("scanBashPaths keeps the argument of cd and pushd", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("cd ..", space.project), [resolve(space.project, "..")]);
-		assert.deepEqual(scanBashPaths("cd -P ..", space.project), [resolve(space.project, "..")]);
-		assert.deepEqual(scanBashPaths("pushd /tmp", space.project), ["/tmp"]);
-	});
-});
-
-test("scanBashPaths resolves cd targets without a slash", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("cd /", space.project), ["/"]);
-		assert.deepEqual(scanBashPaths("cd /tmp", space.project), ["/tmp"]);
-		assert.deepEqual(scanBashPaths("cd -P ..", space.project), [resolve(space.project, "..")]);
-		assert.deepEqual(scanBashPaths("cd -L ../x", space.project), [resolve(space.project, "..", "x")]);
-		assert.deepEqual(scanBashPaths("cd -P /", space.project), ["/"]);
-	});
-});
-
-test("scanBashPaths ignores redirection to /dev/null", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("echo hi 2>/dev/null", space.project), []);
-		assert.deepEqual(scanBashPaths("ls > /dev/null", space.project), []);
-		assert.deepEqual(scanBashPaths("ls 2> /dev/null > /dev/null", space.project), []);
-		assert.deepEqual(scanBashPaths("echo hi >/dev/null 2>&1", space.project), []);
-		assert.deepEqual(scanBashPaths("echo hi > /tmp/out", space.project), ["/tmp/out"]);
-	});
-});
-
-test("scanBashPaths detects a path inside --flag=value", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("tool --file=/etc/passwd", space.project), ["/etc/passwd"]);
-		assert.deepEqual(scanBashPaths("tool --input=/etc/hosts", space.project), ["/etc/hosts"]);
-		assert.deepEqual(scanBashPaths("tool --output=../out.txt", space.project), [resolve(space.project, "..", "out.txt")]);
-	});
-});
-
-test("scanBashPaths skips URLs, flags, and plain words", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("curl https://example.com/a", space.project), []);
-		assert.deepEqual(scanBashPaths("ls -la", space.project), []);
-		assert.deepEqual(scanBashPaths("echo hello world", space.project), []);
-		assert.deepEqual(scanBashPaths("npm install", space.project), []);
-		assert.deepEqual(scanBashPaths("FOO=bar ls", space.project), []);
-	});
-});
-
-test("scanBashPaths strips quotes and removes duplicates", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths(`cat '/etc/passwd' "/etc/passwd"`, space.project), ["/etc/passwd"]);
-	});
-});
-
-test("scanBashPaths handles shell separators", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("cd /tmp && ls /etc; cat /root/x", space.project), [
-			"/tmp",
-			"/etc",
-			"/root/x",
-		]);
-	});
-});
-
-test("scanBashPaths resolves a tilde path", () => {
-	withWorkspace((space) => {
-		assert.deepEqual(scanBashPaths("cat ~/notes.txt", space.project), [join(homedir(), "notes.txt")]);
-	});
-});
-
-test("outsidePaths keeps only the disallowed values", () => {
-	withWorkspace((space) => {
-		const state = stateWith();
-		const values = [join(space.project, "file.txt"), "/etc/passwd", join(space.outside, "secret.txt")];
-		assert.deepEqual(outsidePaths(state, space.project, values), [
-			"/etc/passwd",
-			join(space.outside, "secret.txt"),
-		]);
-	});
-});
 
 test("resolveDirectory stores the canonical path of a symlink", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-perm-"));
@@ -259,8 +165,3 @@ test("resolveDirectory stores the canonical path of a symlink", () => {
 	}
 });
 
-test("scanBashPaths ignores variable assignments", () => {
-	const cwd = "/tmp/work";
-	assert.deepEqual(scanBashPaths("PATH=/usr/local/bin:$PATH pytest", cwd), []);
-	assert.deepEqual(scanBashPaths("env PATH=/usr/bin:/bin ls", cwd), []);
-});

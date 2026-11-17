@@ -96,16 +96,17 @@ The extension refuses a change when the session has no dialog interface, for exa
 
 ## How the gate decides
 
-1. No toolset matches the tool name: the call is blocked and the reason asks for a new toolset.
+1. No toolset matches the tool name: the call is blocked, and the user is asked to allow it once, always, or never. "Always" adds a toolset that matches the exact tool name. The risk class is read for a tool that declares `readOnlyHint`, and execute for every other tool.
 2. The risk flag of the match is off: the call is blocked and the reason names the flag.
 3. A read or write call names a path outside the allowed roots: the call is blocked.
-4. An execute call can change files while the write flag is off or the read-only sandbox is on: the call is blocked.
-5. An execute call can reach the network while the no-network sandbox is on: the call is blocked.
-6. An execute call names a path outside the allowed roots in project scope: the call is blocked.
-7. An execute call has no command argument the gate can read, while bash must stay read only: the call is blocked.
+4. An execute call matches a bash command that an enabled sandbox rejects: the call is blocked.
 
-The gate reads the `path`, `file_path`, `file`, `paths`, and `files` arguments, and the `command`, `cmd`, `script`, and `code` arguments.
+Bash is one tool. The execute flag allows or blocks it as a whole.
+The sandboxes are a second layer that looks inside the command line.
+The gate reads the `path`, `file_path`, `file`, `paths`, and `files` arguments for file tools, and the `command`, `cmd`, `script`, and `code` arguments for the sandboxes.
 A read or write tool with no path argument passes the path scope check.
+
+A session without a dialog interface blocks an unknown tool. The reason names the tool.
 
 The `permissions` tool always passes the gate. It asks the user itself.
 
@@ -119,7 +120,8 @@ A version query such as `node --version` is not blocked. An operator inside quot
 The bash no-network sandbox blocks commands that can reach the network.
 The list includes `curl`, `wget`, `ssh`, `scp`, `git clone`, `git pull`, `docker pull`, `docker compose`, and `gh api`.
 
-While the write flag is off, bash must stay read only, also when the sandbox is off.
+A sandbox works on its own. The write flag does not change the bash read-only sandbox, and the read-only sandbox does not change the write flag.
+Turn on the read-only sandbox when bash must not change files while the execute flag stays on.
 
 ## State file
 

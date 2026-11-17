@@ -4,6 +4,19 @@ Extension for pi that gates tool calls by risk class (read, write, execute), by 
 scope, and by optional bash sandboxes. The user controls it with `/permissions` (TUI) or
 by asking the model, which uses a `permissions` tool that requires user confirmation.
 
+## Revision: bash as one tool
+
+After the first version, two rules changed. Bash is one execute tool: the execute flag
+allows or blocks every bash call, and the path scope applies only to file tools. The
+sandboxes are the second layer that looks inside the command line, and they work on their
+own, independent of the write flag. A tool that matches no toolset is still blocked by the
+gate, but pi now asks the user to allow it once, allow it always, or block it. "Always"
+adds a toolset for the exact tool name.
+
+The rest of this document describes the first version and stays as the design record.
+Where it mentions a bash path scan, a write check tied to the write flag, or a plain
+denial for unknown tools, the revision above replaces it.
+
 Contracts are in `src/types.ts` (already written). Entry point is `src/index.ts`.
 No runtime dependencies. Imports allowed: `typebox` (only), `node:*`, and `import type`
 from `@earendil-works/pi-coding-agent`. Node 26 strips types, so tests run with
@@ -13,7 +26,7 @@ from `@earendil-works/pi-coding-agent`. Node 26 strips types, so tests run with
 
 - `src/state.ts` — defaults, validation/merge, load, atomic save, `StateStore`.
 - `src/classify.ts` — tool name to risk class via toolsets.
-- `src/scope.ts` — path normalization, containment, bash path scan.
+- `src/scope.ts` — path normalization and containment.
 - `src/sandboxes.ts` — sandbox descriptors and command checks.
 - `src/gate.ts` — pure `evaluateCall` decision used by the `tool_call` handler.
 - `src/tool.ts` — registers the `permissions` tool.

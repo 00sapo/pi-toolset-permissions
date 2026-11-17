@@ -57,13 +57,15 @@ test("the permissions tool is always allowed", () => {
 	});
 });
 
-test("an unknown tool is blocked and asks for a toolset", () => {
+test("an unknown tool is blocked so the caller can ask", () => {
 	withWorkspace((space) => {
-		const reason = reasonOf(evaluateCall(stateWith(), "frobnicate", {}, space.project));
-		assert.match(reason, /^Blocked: /);
-		assert.ok(reason.includes("frobnicate"));
-		assert.ok(reason.includes("no toolset"));
-		assert.ok(reason.includes("add_toolset"));
+		const decision = evaluateCall(stateWith(), "frobnicate", {}, space.project);
+		assert.equal(decision.block, true);
+		if (!decision.block) return;
+		assert.equal(decision.kind, "unknown");
+		assert.match(decision.reason, /^Blocked: /);
+		assert.ok(decision.reason.includes("frobnicate"));
+		assert.ok(decision.reason.includes("no toolset"));
 	});
 });
 
@@ -145,15 +147,13 @@ test("everywhere allows any path", () => {
 	});
 });
 
-test("bash reading a path outside the project is blocked", () => {
+test("bash is one tool and ignores the file path scope", () => {
 	withWorkspace((space) => {
-		const reason = reasonOf(evaluateCall(stateWith(), "bash", { command: "cat /etc/passwd" }, space.project));
-		assert.ok(reason.includes("/etc/passwd"));
-		assert.ok(reason.includes("heuristic"));
+		assert.equal(evaluateCall(stateWith(), "bash", { command: "cat /etc/passwd" }, space.project).block, false);
 	});
 });
 
-test("bash path scope is skipped in everywhere", () => {
+test("bash ignores the file path scope in everywhere too", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
 			current.scope = "everywhere";
@@ -168,10 +168,13 @@ test("a read-only bash command is allowed", () => {
 	});
 });
 
-test("a write redirect is blocked while the write flag is off", () => {
+test("the read-only sandbox blocks a write redirect", () => {
 	withWorkspace((space) => {
-		const reason = reasonOf(evaluateCall(stateWith(), "bash", { command: "echo hi > f" }, space.project));
-		assert.ok(reason.includes("write flag is off"));
+		const state = stateWith((current) => {
+			current.sandboxes.readonly_bash = true;
+		});
+		const reason = reasonOf(evaluateCall(state, "bash", { command: "echo hi > f" }, space.project));
+		assert.ok(reason.includes("read-only sandbox is on"));
 		assert.ok(reason.includes("redirects output"));
 	});
 });
@@ -192,13 +195,16 @@ test("a write redirect is blocked by the read-only bash sandbox", () => {
 			current.sandboxes.readonly_bash = true;
 		});
 		const reason = reasonOf(evaluateCall(state, "bash", { command: "echo hi > f" }, space.project));
-		assert.ok(reason.includes("read-only bash sandbox is on"));
+		assert.ok(reason.includes("read-only sandbox is on"));
 	});
 });
 
-test("a write command is blocked while the write flag is off", () => {
+test("a write command is blocked by the read-only sandbox", () => {
 	withWorkspace((space) => {
-		const reason = reasonOf(evaluateCall(stateWith(), "bash", { command: "rm -rf build" }, space.project));
+		const state = stateWith((current) => {
+			current.sandboxes.readonly_bash = true;
+		});
+		const reason = reasonOf(evaluateCall(state, "bash", { command: "rm -rf build" }, space.project));
 		assert.ok(reason.includes("rm can delete files"));
 	});
 });
@@ -224,9 +230,12 @@ test("curl is blocked when the no-network sandbox is on", () => {
 	});
 });
 
-test("a shell separator cannot hide a write command", () => {
+test("a shell separator cannot hide a write command from the sandbox", () => {
 	withWorkspace((space) => {
-		const reason = reasonOf(evaluateCall(stateWith(), "bash", { command: "ls && rm -f f" }, space.project));
+		const state = stateWith((current) => {
+			current.sandboxes.readonly_bash = true;
+		});
+		const reason = reasonOf(evaluateCall(state, "bash", { command: "ls && rm -f f" }, space.project));
 		assert.ok(reason.includes("rm can delete files"));
 	});
 });
@@ -240,7 +249,7 @@ test("reasons start with Blocked and stay short", () => {
 		const decisions: GateDecision[] = [
 			evaluateCall(state, "frobnicate", {}, space.project),
 			evaluateCall(state, "read", { path: longPath }, space.project),
-			evaluateCall(state, "bash", { command: `cat ${longPath}` }, space.project),
+			evaluateCall(state, "edit", { path: longPath }, space.project),
 		];
 		for (const decision of decisions) {
 			const reason = reasonOf(decision);
@@ -263,17 +272,14 @@ test("input without a path skips the scope check", () => {
 	});
 });
 
-test("bash that redirects to /dev/null passes the project scope check", () => {
+test("bash redirects are not part of the project path scope", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
 			current.flags.write = true;
 		});
 		assert.equal(evaluateCall(state, "bash", { command: "echo hi 2>/dev/null" }, space.project).block, false);
 		assert.equal(evaluateCall(state, "bash", { command: "ls > /dev/null" }, space.project).block, false);
-
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "echo hi > /tmp/out" }, space.project));
-		assert.ok(reason.includes("/tmp/out"));
-		assert.ok(reason.includes("outside the allowed roots"));
+		assert.equal(evaluateCall(state, "bash", { command: "echo hi > /tmp/out" }, space.project).block, false);
 	});
 });
 
@@ -317,10 +323,12 @@ test("an unknown MCP tool is blocked with every flag on", () => {
 			current.scope = "everywhere";
 			current.sandboxes = { readonly_bash: false, no_network: false };
 		});
-		const reason = reasonOf(evaluateCall(state, "mcp__foo__bar", {}, space.project));
-		assert.ok(reason.includes("mcp__foo__bar"));
-		assert.ok(reason.includes("no toolset"));
-		assert.ok(reason.includes("add_toolset"));
+		const decision = evaluateCall(state, "mcp__foo__bar", {}, space.project);
+		assert.equal(decision.block, true);
+		if (!decision.block) return;
+		assert.equal(decision.kind, "unknown");
+		assert.ok(decision.reason.includes("mcp__foo__bar"));
+		assert.ok(decision.reason.includes("no toolset"));
 	});
 });
 
@@ -373,7 +381,7 @@ test("the read-only bash sandbox blocks touch even with the write flag on", () =
 			current.sandboxes.readonly_bash = true;
 		});
 		const reason = reasonOf(evaluateCall(state, "bash", { command: "touch x" }, space.project));
-		assert.ok(reason.includes("read-only bash sandbox is on"));
+		assert.ok(reason.includes("read-only sandbox is on"));
 		assert.ok(reason.includes("touch"));
 		assert.equal(evaluateCall(state, "bash", { command: "ls" }, space.project).block, false);
 	});
@@ -392,24 +400,28 @@ test("the no-network sandbox blocks git fetch but not git status", () => {
 	});
 });
 
-test("an execute tool with another command key is still checked", () => {
+test("an execute tool with another command key is still checked by a sandbox", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
 			current.scope = "everywhere";
+			current.sandboxes.readonly_bash = true;
 		});
 		assert.equal(evaluateCall(state, "mcp__fs__bash", { cmd: "rm -rf /" }, space.project).block, true);
 		assert.equal(evaluateCall(state, "mcp__fs__bash", { cmd: "ls -la" }, space.project).block, false);
 	});
 });
 
-test("an execute tool without a command key fails closed when bash is read-only", () => {
+test("an execute tool without a command key fails closed when a sandbox is on", () => {
 	withWorkspace((space) => {
-		const state = stateWith(() => {});
+		const state = stateWith((current) => {
+			current.sandboxes.readonly_bash = true;
+		});
 		assert.equal(evaluateCall(state, "mcp__fs__bash", { payload: "x" }, space.project).block, true);
-		const writable = stateWith((current) => {
+		const unsandboxed = stateWith((current) => {
 			current.flags.write = true;
 		});
-		assert.equal(evaluateCall(writable, "mcp__fs__bash", { payload: "x" }, space.project).block, false);
+		assert.equal(evaluateCall(unsandboxed, "mcp__fs__bash", { payload: "x" }, space.project).block, false);
+		assert.equal(evaluateCall(unsandboxed, "mcp__fs__bash", { cmd: "rm -rf /" }, space.project).block, false);
 	});
 });
 
