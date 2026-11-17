@@ -12,20 +12,25 @@ export const SANDBOXES: SandboxInfo[] = [
 	{
 		key: "readonly_bash",
 		label: "Read-only filesystem",
-		description: "Run bash in a read-only view of the filesystem (needs bubblewrap).",
+		description: "Run bash with a read-only filesystem (bubblewrap, or Seatbelt on macOS).",
 	},
 	{
 		key: "no_network",
 		label: "No network",
-		description: "Run bash without network access (needs bubblewrap or unshare).",
+		description: "Run bash without network access (bubblewrap, unshare, or Seatbelt on macOS).",
 	},
 ];
 
 /** External programs a sandbox needs. Tests pass a fixed value. */
 export interface SandboxTools {
+	/** bubblewrap, Linux. */
 	bwrap: string | null;
+	/** util-linux unshare, Linux. Network isolation only. */
 	unshare: string | null;
+	/** Seatbelt, macOS. */
+	sandboxExec: string | null;
 	shell: string;
+	platform: NodeJS.Platform;
 }
 
 /** A command to run, an error to report, or null when no sandbox is on. */
@@ -49,10 +54,13 @@ export function findExecutable(name: string, pathValue = process.env.PATH ?? "")
 }
 
 export function detectSandboxTools(): SandboxTools {
+	const platform = process.platform;
 	return {
-		bwrap: findExecutable("bwrap"),
-		unshare: findExecutable("unshare"),
-		shell: DEFAULT_SHELL,
+		bwrap: platform === "linux" ? findExecutable("bwrap") : null,
+		unshare: platform === "linux" ? findExecutable("unshare") : null,
+		sandboxExec: platform === "darwin" ? findExecutable("sandbox-exec") : null,
+		shell: platform === "win32" ? "cmd.exe" : DEFAULT_SHELL,
+		platform,
 	};
 }
 
@@ -61,29 +69,44 @@ export function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/**
- * Wraps a bash command in an OS-level sandbox. The read-only sandbox binds the root
- * read-only, so any write fails at the kernel. The no-network sandbox unshares the
- * network namespace. No command text is analyzed.
- */
-export function wrapBash(
-	command: string,
-	state: PermissionsState,
-	tools: SandboxTools = detectSandboxTools(),
-): SandboxPlan {
-	const { readonly_bash, no_network } = state.sandboxes;
-	if (!readonly_bash && !no_network) return null;
+/** Seatbelt profile: allow by default, then deny writes and the network. */
+export function seatbeltProfile(state: PermissionsState): string {
+	const rules = ["(version 1)", "(allow default)"];
+	if (state.sandboxes.readonly_bash) {
+		rules.push("(deny file-write*)");
+		for (const device of ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"]) {
+			rules.push(`(allow file-write* (literal "${device}"))`);
+		}
+	}
+	if (state.sandboxes.no_network) rules.push("(deny network*)");
+	return rules.join("");
+}
 
+function macOSPlan(command: string, state: PermissionsState, tools: SandboxTools): SandboxPlan {
+	if (tools.sandboxExec === null) {
+		return {
+			error:
+				"The sandboxes need sandbox-exec on macOS. It is missing on this system, so the command did not run. Turn the sandbox off in /permissions.",
+		};
+	}
+	const profile = seatbeltProfile(state);
+	const inner = `${shellQuote(tools.shell)} -lc ${shellQuote(command)}`;
+	return {
+		command: `${shellQuote(tools.sandboxExec)} -p ${shellQuote(profile)} ${inner}`,
+	};
+}
+
+function linuxPlan(command: string, state: PermissionsState, tools: SandboxTools): SandboxPlan {
 	const inner = `${shellQuote(tools.shell)} -lc ${shellQuote(command)}`;
 	if (tools.bwrap !== null) {
-		const bind = readonly_bash ? "--ro-bind / /" : "--bind / /";
-		const net = no_network ? " --unshare-net" : "";
+		const bind = state.sandboxes.readonly_bash ? "--ro-bind / /" : "--bind / /";
+		const net = state.sandboxes.no_network ? " --unshare-net" : "";
 		return {
 			command: `${shellQuote(tools.bwrap)} ${bind} --dev /dev --proc /proc${net} --die-with-parent -- ${inner}`,
 		};
 	}
 
-	if (readonly_bash) {
+	if (state.sandboxes.readonly_bash) {
 		return {
 			error:
 				"The read-only filesystem sandbox needs bubblewrap (bwrap). Install bubblewrap, or turn the sandbox off in /permissions.",
@@ -97,5 +120,31 @@ export function wrapBash(
 	return {
 		error:
 			"The no-network sandbox needs bubblewrap (bwrap) or unshare. Install one, or turn the sandbox off in /permissions.",
+	};
+}
+
+/**
+ * Wraps a bash command in an OS-level sandbox. No command text is analyzed.
+ * Linux uses bubblewrap or unshare, macOS uses Seatbelt, and native Windows is
+ * unsupported, so the call fails closed with instructions to use WSL2.
+ */
+export function wrapBash(
+	command: string,
+	state: PermissionsState,
+	tools: SandboxTools = detectSandboxTools(),
+): SandboxPlan {
+	if (!state.sandboxes.readonly_bash && !state.sandboxes.no_network) return null;
+
+	if (tools.platform === "win32") {
+		return {
+			error:
+				"Native Windows has no sandbox backend in this extension, so the command did not run. Run pi inside WSL2 to use bubblewrap, or turn the sandbox off in /permissions.",
+		};
+	}
+	if (tools.platform === "darwin") return macOSPlan(command, state, tools);
+	if (tools.platform === "linux") return linuxPlan(command, state, tools);
+
+	return {
+		error: `The sandboxes are not available on ${tools.platform}, so the command did not run. Turn the sandbox off in /permissions.`,
 	};
 }
