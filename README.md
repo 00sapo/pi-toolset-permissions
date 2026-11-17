@@ -1,6 +1,14 @@
 # pi-toolset-permissions
 
-This extension adds a small settings screen to a pi session. You switch groups of tools and bash sandboxes on and off with a few keys. You can also tell the model what it must not do, for example "run in read-only mode now". The extension gives the model one tool that changes a setting, and that tool asks you to agree first.
+_Do you find managing sandboxes and permissions complicated?_
+
+This extension adopts a different modular, on-the-fly approach: you can toggle set of tools and
+sandboxes using a simple menu during the session.
+
+You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The exetension provides tool to change the allowed operations.
+
+The AI can ask to change the permissions, but you can even disable that with _"Disable the
+permission tool"_
 
 ## Main features
 
