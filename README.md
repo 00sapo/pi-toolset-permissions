@@ -1,33 +1,96 @@
 # pi-toolset-permissions
 
-An extension for pi that checks each tool call before it runs.
+_Do you find managing sandboxes and permissions complicated?_
 
-The extension sorts tools into three risk classes: read, write, and execute.
-Each class has a flag. A flag set to off blocks every tool in that class.
-A path scope limits the directories that tools can reach.
-Two optional sandboxes run bash inside an operating-system boundary: a read-only filesystem view, and a separate network namespace.
+This extension adopts a different modular, on-the-fly approach: you can toggle set of tools and
+sandboxes using a simple menu during the session.
+
+You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The exetension provides tool to change the allowed operations.
+
+The AI can ask to change the permissions, but you can even disable that with _"Disable the
+permission tool"_
+
+## Main features
+
+- Three permission flags: read, write, and execute.
+- A path scope for the file tools.
+- Two sandboxes for shell commands: a read-only filesystem, and no network.
+- Custom toolsets that match tool names with regular expressions.
+- One `permissions` tool for the model. Each change asks you to agree.
+- A question for each tool that no toolset matches.
+- One state file for all sessions.
+
+## Concept
+
+A sandbox is an operating-system boundary for shell commands.
+
+A risk class is one of three groups: read, write, or execute. The extension puts each tool in one risk class.
+
+A toolset is a group of tool names that share one risk class. The extension ships three toolsets, one for each risk class. You can add a toolset with your own patterns.
+
+A flag allows or blocks each risk class. If the write flag is off, pi blocks every write tool.
+
+A path scope is the set of directories that file tools can touch. Project scope allows the project directory and the extra paths. Everywhere scope removes the path limit.
+
+Bash is the only tool in the execute class. The execute flag allows or blocks every bash call. The sandbox is a second layer that starts the whole call inside the boundary. The sandbox does not read the command text.
+
+The model changes the state with the `permissions` tool. The tool asks you to agree before each change. Without a dialog, the tool cannot change the state.
 
 ## Install
 
-Run pi with the extension:
+Install the package from a local path:
 
 ```sh
 pi install /path/to/pi-toolset-permissions
 ```
 
-Or load the extension for one run:
+Or load the extension for one session:
 
 ```sh
 pi -e /path/to/pi-toolset-permissions/src/index.ts
 ```
 
-After you edit the code of an installed copy, run `/reload` in pi.
-A run started with `pi -e` reads the file when pi starts, so restart pi instead.
-Run `/permissions` to open the settings screen.
+An installed copy reloads with `/reload`. A session that starts with `pi -e` reads the file at startup, so start pi again after an edit.
 
-The read-only sandbox needs bubblewrap (`bwrap`) on Linux. The no-network sandbox also accepts `unshare` from util-linux. macOS uses the built-in `sandbox-exec`. Native Windows needs WSL2.
+The read-only sandbox needs bubblewrap on Linux. macOS uses the built-in `sandbox-exec`. Native Windows has no backend. Start pi inside WSL2 to use the Linux backend.
 
-## Default state
+## Use
+
+Open the settings screen:
+
+```text
+/permissions
+```
+
+The screen shows the flags, the scope, and three pages:
+
+```text
+ Permissions
+
+   Read            [ON]
+   Write           [OFF]
+   Execute         [ON]
+   Scope           [PROJECT]
+   Paths (1)          >
+   Toolsets (3)       >
+   Sandboxes (0)      >
+
+ space/enter toggle · s scope · p paths · t toolsets · b sandboxes · esc close
+```
+
+| Key | Action |
+| --- | --- |
+| up, down | move the selection |
+| space, enter | change the selected row, or open its page |
+| s | switch the scope between project and everywhere |
+| p | open the paths page |
+| t | open the toolsets page |
+| b | open the sandboxes page |
+| esc | go back to the main page, or close the screen |
+
+Each change is saved at once. The esc key never loses work.
+
+The default state:
 
 | Setting | Default |
 | --- | --- |
@@ -36,54 +99,42 @@ The read-only sandbox needs bubblewrap (`bwrap`) on Linux. The no-network sandbo
 | Execute tools | on |
 | Path scope | project |
 | Extra paths | none |
-| Bash read-only | off |
-| Bash no-network | off |
+| Read-only filesystem sandbox | off |
+| No-network sandbox | off |
 
-Project scope allows the project directory and the extra paths.
-The scope `everywhere` removes the path check.
+The write flag is off at the start. Turn it on before the model can change files with the write and edit tools.
 
-Three builtin toolsets ship with the extension. A toolset maps tool names to a risk class.
-A custom toolset maps more names to a risk class.
+## The paths page
 
-The footer shows a short status line, for example `read:on write:off exec:on project`.
+The page lists the project root and the extra paths.
 
-## The settings screen
+Press `a` to add a directory. Type a path. The extension makes sure that the path is an existing directory. Press `d` to remove the selected extra path.
 
-Run `/permissions`. The main page shows the three flags, the scope, and three pages.
+The project root cannot be removed. The extension saves the resolved path, so a symlink cannot add a larger tree than the dialog shows.
 
-| Key | Action |
-| --- | --- |
-| up, down | move the selection |
-| space, enter | toggle the selected row, or open its page |
-| s | switch the scope between project and everywhere |
-| p | open the paths page |
-| t | open the toolsets page |
-| b | open the sandboxes page |
-| esc | return to the main page, or close the screen |
+## The toolsets page
 
-The paths page lists the project root and the extra paths.
-Press `a` to add a directory. The extension checks that the path is an existing directory, and it stores the resolved path, so a symlink cannot widen the scope more than the dialog shows.
-Press `d` to remove the selected extra path. The project root cannot be removed.
+The page lists the three builtin toolsets and the custom toolsets. The builtin toolsets are read-only.
 
-The toolsets page lists the three builtin toolsets, marked `builtin`, and the custom toolsets.
-The builtin toolsets are read only.
-Press space to turn a custom toolset on or off, and `d` to delete it.
-Ask the assistant to add a toolset, with its name patterns and its risk class.
+Press space to turn a custom toolset on or off. Press `d` to delete a custom toolset.
 
-The sandboxes page lists the two sandboxes with a short description.
-Press space to toggle the selected sandbox.
+Ask the assistant to add a toolset. Give the name, the risk class, and the patterns.
 
-Every change is saved at once, so esc loses no work.
+When a custom toolset is off, its patterns match nothing. If no other toolset matches the tool, pi asks you about the tool.
+
+## The sandboxes page
+
+The page lists two sandboxes.
+
+Press space to turn the selected sandbox on or off. The change applies to the next bash call.
 
 ## The permissions tool
 
-The model reads and changes the same settings with the `permissions` tool.
-Every change opens a confirmation dialog. The message names the state before and after the change.
-A declined dialog changes nothing.
+The model uses one tool with nine actions.
 
 | Action | Parameters | Effect |
 | --- | --- | --- |
-| status | none | print the flags, the scope, the paths, the toolsets, and the sandboxes |
+| status | none | show the flags, the scope, the paths, the toolsets, and the sandboxes |
 | set_flag | flag, enabled | turn the read, write, or execute flag on or off |
 | set_scope | scope | set the scope to project or everywhere |
 | add_path | path | allow one more directory in project scope |
@@ -91,66 +142,69 @@ A declined dialog changes nothing.
 | add_toolset | name, risk, patterns | add a custom toolset |
 | remove_toolset | name | delete a custom toolset |
 | set_toolset | name, enabled | turn a custom toolset on or off |
-| set_sandbox | sandbox, enabled | turn a bash sandbox on or off |
+| set_sandbox | sandbox, enabled | turn a sandbox on or off |
 
-The `status` action only reads. The other eight actions change the state.
-The extension refuses a change when the session has no dialog interface, for example with `pi -p` or in JSON mode.
+The `status` action only reads. The other eight actions ask you to agree before they change the state.
 
-## How the gate decides
+You can tell the assistant what you want in your own words. Examples:
 
-1. No toolset matches the tool name: the call is blocked, and the user is asked to allow it once, always, or never. "Always" adds a toolset that matches the exact tool name. The risk class is read for a tool that declares `readOnlyHint`, and execute for every other tool.
-2. The risk flag of the match is off: the call is blocked and the reason names the flag.
-3. A read or write call names a path outside the allowed roots: the call is blocked.
+- "Allow write tools." The model calls `set_flag`.
+- "Enlarge the scope to ../shared." The model calls `add_path`.
+- "Turn on the no-network sandbox." The model calls `set_sandbox`.
 
-Bash is one tool. The execute flag allows or blocks it as a whole.
-The sandboxes do not read the command. They run the whole bash call inside an operating-system boundary.
-The gate reads the `path`, `file_path`, `file`, `paths`, and `files` arguments of file tools.
-A read or write tool with no path argument passes the path scope check.
+## Unknown tools
 
-A session without a dialog interface blocks an unknown tool. The reason names the tool.
+A tool that no toolset matches is blocked. Pi then asks you one question with three answers:
 
-The `permissions` tool always passes the gate. It asks the user itself.
+- Allow once: the call starts, and the state does not change.
+- Always allow: the extension adds a toolset for the exact tool name, then the call starts.
+- Block: the call does not start.
+
+A tool with `readOnlyHint` joins the read class. Every other tool joins the execute class. Without a dialog, the call is blocked.
 
 ## Sandboxes
 
-The read-only filesystem sandbox runs every bash command with the root directory bound read-only.
-The kernel rejects any write, including writes to `/tmp`, so no command text is checked.
+A sandbox starts the bash call inside an operating-system boundary. It does not read the command text.
 
-On Linux the sandbox needs `bwrap` from bubblewrap.
-On macOS it uses Seatbelt through `sandbox-exec`, and it denies `file-write*` except for `/dev/null`, `/dev/stdout`, `/dev/stderr`, and `/dev/tty`.
+The read-only filesystem sandbox makes the filesystem read-only. Every write fails, including writes to `/tmp`.
 
-On Linux the no-network sandbox runs every bash command in a separate network namespace, and it needs `bwrap` or `unshare` from util-linux.
-On macOS it adds `(deny network*)` to the Seatbelt profile.
-Every network operation fails, including name resolution.
+- On Linux, the sandbox uses `bwrap` from bubblewrap with a read-only bind of the root.
+- On macOS, the sandbox uses `sandbox-exec` with a Seatbelt profile. The profile denies `file-write*` and allows writes to the standard devices only.
 
-Both sandboxes can be on at once.
-When the program that a sandbox needs is missing, the shell call fails with a clear message. It never runs unsandboxed.
-A sandbox works on its own: the write flag does not change it, and it does not change the write flag.
+The no-network sandbox removes network access. Name resolution also fails.
 
-Native Windows has no backend in this extension, so the `bash` and `powershell` tools fail closed while a sandbox is on.
-Run pi inside WSL2 to get the Linux sandbox with bubblewrap. The pi containerization guide also covers whole-process isolation with Docker.
+- On Linux, the sandbox uses a separate network namespace. It needs `bwrap`, or `unshare` from util-linux.
+- On macOS, the Seatbelt profile adds `(deny network*)`.
 
-Commands that you type yourself with `!` are not sandboxed. The sandboxes apply to the shell tools that the model calls.
+You can turn on both sandboxes at once.
+
+If a program that a sandbox needs is missing, the bash call fails with a message. The call never starts without the sandbox.
+
+A sandbox does not change the flags, and a flag does not change a sandbox. Turn on the read-only sandbox when bash must not change files.
+
+Commands that you type with `!` are not sandboxed. A sandbox covers only the shell tools that the model calls.
 
 ## State file
 
-The state lives in one JSON file at `~/.pi/agent/permissions.json`.
-Set `PI_PERMISSIONS_FILE` to use another path.
-Set `PI_CODING_AGENT_DIR` to move the agent directory.
-The extension writes a temporary file and renames it, so a crash cannot leave half a file.
+The state lives in one file: `~/.pi/agent/permissions.json`.
+
+- `PI_PERMISSIONS_FILE` sets another path for the file.
+- `PI_CODING_AGENT_DIR` moves the agent directory.
+
+The extension writes a temporary file and renames it. A crash cannot leave half a file.
+
 A missing file gives the default state. A corrupt file gives the default state too.
 
-## Limitations
+## Limits
 
-The sandboxes use kernel mechanisms per platform: namespaces on Linux, Seatbelt on macOS.
-On native Windows they are not available, and the shell tools fail closed.
+The path scope covers the usual path arguments of the file tools. A tool that takes a path in another argument is not covered. Add a custom toolset only for tools that you trust.
+
+Native Windows has no sandbox backend, so the shell tools block the call while a sandbox is on. Start pi inside WSL2, or turn the sandbox off.
+
 Seatbelt is deprecated by Apple but still present on current macOS versions. If `sandbox-exec` is missing, the call fails with a message.
 
-A sandbox limits the process tree that the shell tools start. It does not limit pi itself, other tools, or commands that you type with `!`.
+A sandbox limits the process tree that a shell tool starts. It does not limit pi, other tools, or commands that you type with `!`.
+
 The operating system is the real boundary. User accounts, containers, and network policy hold a process back even when the extension is wrong.
 
-A command that changes files through a server or a device outside the filesystem can still have an effect. The read-only sandbox covers the filesystem, not every device.
-
-The path scope covers the usual path arguments of read tools and write tools.
-A tool that takes a path in another argument is not checked by the path scope.
-Add a custom toolset only for tools that you trust.
+No tool guarantees compliance with ASD-STE100. The official dictionary is free at asd-ste100.org.
