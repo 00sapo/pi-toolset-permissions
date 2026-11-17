@@ -1,5 +1,9 @@
 # pi-toolset-permissions
 
+<p align="center">
+  <img src="docs/preview.png" alt="The /permissions screen: the toolsets with their pattern counts, the sandboxes, the path scope, and the paths" width="760">
+</p>
+
 _Do you find managing sandboxes and permissions complicated?_
 
 This extension adopts a different modular, on-the-fly approach: you can toggle sets of tools and
