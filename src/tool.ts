@@ -8,15 +8,10 @@ import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
 import { MAX_EXTRA_PATHS, MAX_TOOLSETS, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 
-function riskUnion(description: string) {
-	return Type.Union([Type.Literal("read"), Type.Literal("write"), Type.Literal("execute")], { description });
-}
-
 const parameters = Type.Object({
 	action: Type.Union(
 		[
 			Type.Literal("status"),
-			Type.Literal("set_flag"),
 			Type.Literal("set_scope"),
 			Type.Literal("add_path"),
 			Type.Literal("remove_path"),
@@ -27,9 +22,7 @@ const parameters = Type.Object({
 		],
 		{ description: "Action to run. Read status first when the reason for a block is unclear." },
 	),
-	flag: Type.Optional(riskUnion("Risk flag to change for set_flag.")),
-	risk: Type.Optional(riskUnion("Risk class that the new toolset assigns to the tools it matches.")),
-	enabled: Type.Optional(Type.Boolean({ description: "New value for set_flag, set_toolset, and set_sandbox." })),
+	enabled: Type.Optional(Type.Boolean({ description: "New value for set_toolset and set_sandbox." })),
 	scope: Type.Optional(
 		Type.Union([Type.Literal("project"), Type.Literal("everywhere")], {
 			description: "Path scope for set_scope. everywhere removes the path check.",
@@ -69,29 +62,26 @@ function onOff(value: boolean): string {
 	return value ? "on" : "off";
 }
 
-function capitalize(value: string): string {
-	return value.length === 0 ? value : `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
-}
-
 /** One-line summary for the footer status. */
 export function statusLine(state: PermissionsState): string {
-	return `read:${onOff(state.flags.read)} write:${onOff(state.flags.write)} exec:${onOff(state.flags.execute)} ${state.scope}`;
+	const on = state.toolsets.filter((toolset) => toolset.enabled).length;
+	const sandboxes = SANDBOXES.filter((sandbox) => state.sandboxes[sandbox.key]).length;
+	return `toolsets:${on}/${state.toolsets.length} sandboxes:${sandboxes}/${SANDBOXES.length} ${state.scope}`;
 }
 
 /** Compact text report of the current state. */
 export function statusText(state: PermissionsState): string {
-	const lines = [
-		`flags: read=${onOff(state.flags.read)} write=${onOff(state.flags.write)} execute=${onOff(state.flags.execute)}`,
-		`scope: ${state.scope}`,
-		`extra paths: ${state.extra_paths.length === 0 ? "none" : state.extra_paths.join(", ")}`,
-		`toolsets (${state.toolsets.length}):`,
-	];
+	const lines = [`toolsets (${state.toolsets.length}):`];
 	for (const toolset of state.toolsets) {
-		const marker = toolset.builtin ? "builtin" : toolset.enabled ? "enabled" : "disabled";
-		lines.push(`  ${toolset.name} risk=${toolset.risk} ${marker} patterns=${toolset.patterns.length}`);
+		const marker = toolset.locked ? "locked" : toolset.builtin ? "builtin" : "custom";
+		lines.push(`  ${toolset.name} ${onOff(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
 	}
 	lines.push(
 		`sandboxes: readonly_bash=${onOff(state.sandboxes.readonly_bash)} no_network=${onOff(state.sandboxes.no_network)}`,
+	);
+	lines.push(`scope: ${state.scope}`);
+	lines.push(
+		`paths: ${state.extra_paths.length === 0 ? "the project root only" : state.extra_paths.join(", ")}`,
 	);
 	return lines.join("\n");
 }
@@ -117,28 +107,6 @@ function applyChange(
 		// The footer status is cosmetic. The change is already saved.
 	}
 	return { text: `${summary}\n\n${statusText(next)}` };
-}
-
-async function setFlag(env: ToolEnv): Promise<ToolOutcome> {
-	const { flag } = env.params;
-	const enabled = env.params.enabled;
-	if (flag === undefined) return { text: "set_flag needs flag: read, write, or execute.", isError: true };
-	if (enabled === undefined) return { text: "set_flag needs enabled: true or false.", isError: true };
-	const before = env.store.get().flags[flag];
-	const label = `${capitalize(flag)} tools`;
-	if (before === enabled) return { text: `${label} are already ${onOff(enabled)}. Nothing to change.` };
-	const title = `${enabled ? "Allow" : "Block"} ${flag} tools?`;
-	const message = `${flag}: ${onOff(before)} → ${onOff(enabled)}\n\n${
-		enabled
-			? `${label} run when the path scope allows the target.`
-			: `Every ${flag} tool call is blocked.`
-	}`;
-	if (!(await env.ctx.ui.confirm(title, message))) return declined();
-	return applyChange(
-		env,
-		(current) => ({ ...current, flags: { ...current.flags, [flag]: enabled } }),
-		`${label} are now ${onOff(enabled)}.`,
-	);
 }
 
 async function setScope(env: ToolEnv): Promise<ToolOutcome> {
@@ -221,9 +189,7 @@ function readPatterns(raw: string[] | undefined): { patterns: string[] } | { err
 
 async function addToolset(env: ToolEnv): Promise<ToolOutcome> {
 	const name = env.params.name?.trim();
-	const risk = env.params.risk;
 	if (name === undefined || name === "") return { text: "add_toolset needs name.", isError: true };
-	if (risk === undefined) return { text: "add_toolset needs risk: read, write, or execute.", isError: true };
 	const parsed = readPatterns(env.params.patterns);
 	if ("error" in parsed) return { text: parsed.error, isError: true };
 	const patterns = parsed.patterns;
@@ -234,15 +200,15 @@ async function addToolset(env: ToolEnv): Promise<ToolOutcome> {
 		return { text: `The list already holds ${MAX_TOOLSETS} toolsets. Remove one first.`, isError: true };
 	}
 	const title = `Add toolset ${name}?`;
-	const message = `name: ${name}\nrisk: ${risk}\npatterns:\n${patterns.map((pattern) => `  ${pattern}`).join("\n")}`;
+	const message = `name: ${name}\npatterns:\n${patterns.map((pattern) => `  ${pattern}`).join("\n")}`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(
 		env,
 		(current) => ({
 			...current,
-			toolsets: [...current.toolsets, { name, risk, patterns, enabled: true, builtin: false }],
+			toolsets: [...current.toolsets, { name, patterns, enabled: true, builtin: false, locked: false }],
 		}),
-		`Added the toolset ${name} with risk ${risk}.`,
+		`Added the toolset ${name}.`,
 	);
 }
 
@@ -253,7 +219,7 @@ async function removeToolset(env: ToolEnv): Promise<ToolOutcome> {
 	if (toolset === undefined) return { text: `No toolset is named ${name}.`, isError: true };
 	if (toolset.builtin) return { text: `The builtin toolset ${name} cannot be removed.`, isError: true };
 	const title = `Remove toolset ${name}?`;
-	const message = `Tools that match ${name} no longer get the risk class ${toolset.risk}.`;
+	const message = `Tools that match ${name} are blocked again unless another toolset matches them.`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(
 		env,
@@ -269,8 +235,11 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 	if (enabled === undefined) return { text: "set_toolset needs enabled: true or false.", isError: true };
 	const toolset = env.store.get().toolsets.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
 	if (toolset === undefined) return { text: `No toolset is named ${name}.`, isError: true };
-	if (toolset.builtin) {
-		return { text: `The builtin toolset ${name} is always on. Use set_flag to change its risk flag.`, isError: true };
+	if (toolset.locked) {
+		return {
+			text: `The toolset ${name} is locked. It protects the permissions tool, so it is always on.`,
+			isError: true,
+		};
 	}
 	if (toolset.enabled === enabled) return { text: `The toolset ${name} is already ${enabled ? "on" : "off"}.` };
 	const title = `Turn ${enabled ? "on" : "off"} toolset ${name}?`;
@@ -284,7 +253,7 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 			...current,
 			toolsets: current.toolsets.map((candidate) => (candidate.name === toolset.name ? { ...candidate, enabled } : candidate)),
 		}),
-		`The toolset ${name} is now ${enabled ? "on" : "off"}.`,
+		`The toolset ${name} is now ${onOff(enabled)}.`,
 	);
 }
 
@@ -311,8 +280,6 @@ async function runAction(env: ToolEnv): Promise<ToolOutcome> {
 	const { action } = env.params;
 	if (action === "status") return { text: statusText(env.store.get()) };
 	switch (action) {
-		case "set_flag":
-			return setFlag(env);
 		case "set_scope":
 			return setScope(env);
 		case "add_path":
@@ -328,7 +295,10 @@ async function runAction(env: ToolEnv): Promise<ToolOutcome> {
 		case "set_sandbox":
 			return setSandbox(env);
 		default:
-			return { text: "Unknown action. Use status, set_flag, set_scope, add_path, remove_path, add_toolset, remove_toolset, set_toolset, or set_sandbox.", isError: true };
+			return {
+				text: "Unknown action. Use status, set_scope, add_path, remove_path, add_toolset, remove_toolset, set_toolset, or set_sandbox.",
+				isError: true,
+			};
 	}
 }
 
@@ -341,8 +311,8 @@ export function registerPermissionsTool(
 		name: "permissions",
 		label: "Permissions",
 		description:
-			"Read or change the tool permissions, path scope, toolsets, and bash sandboxes. Every change asks the user to confirm.",
-		promptSnippet: "Read or change tool permissions, scope, and sandboxes (asks the user to confirm)",
+			"Read or change the toolsets, path scope, and bash sandboxes. Every change asks the user to confirm.",
+		promptSnippet: "Read or change toolsets, path scope, and sandboxes (asks the user to confirm)",
 		promptGuidelines: [
 			'Use permissions with action "status" when a tool call is blocked and the reason does not explain why.',
 			"Use permissions to request a permission change; the user is asked to confirm, and the change applies only after approval.",

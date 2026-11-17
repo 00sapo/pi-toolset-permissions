@@ -1,9 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { PermissionsState, Risk, SandboxFlags, ScopeMode, Toolset } from "./types.ts";
-
-const RISKS: Risk[] = ["read", "write", "execute"];
+import type { PermissionsState, SandboxFlags, ScopeMode, Toolset } from "./types.ts";
 
 export const MAX_EXTRA_PATHS = 100;
 export const MAX_TOOLSETS = 50;
@@ -12,43 +10,66 @@ const MAX_PATTERN_LENGTH = 500;
 
 const SANDBOX_KEYS: Array<keyof SandboxFlags> = ["readonly_bash", "no_network"];
 
-const BUILTIN_PATTERNS: Record<Risk, string[]> = {
-	read: [
-		"^(read|ls|find|grep|tool_search)$",
-		"^hypa_(read|ls|find|grep)$",
-		"^(read|list|search|get)_",
-		"_(read|list|grep)$",
-	],
-	write: [
-		"^(write|edit)$",
-		"^hypa_(write|edit)$",
-		"^(write|edit|patch|apply)_",
-		"_(write|edit|patch)$",
-	],
-	execute: [
-		"^(bash|powershell|codemode)$",
-		"^hypa_(shell|bash|exec|run|powershell)$",
-		"^(bash|shell|exec|run|spawn)_",
-		"_(bash|shell|exec)$",
-	],
-};
+/** The toolsets that the extension ships. `write` starts off. */
+const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; locked: boolean; patterns: string[] }> = [
+	{
+		name: "read",
+		enabled: true,
+		locked: false,
+		patterns: [
+			"^(read|ls|find|grep|tool_search)$",
+			"^hypa_(read|ls|find|grep)$",
+			"^(read|list|search|get)_",
+			"_(read|list|grep)$",
+		],
+	},
+	{
+		name: "write",
+		enabled: false,
+		locked: false,
+		patterns: [
+			"^(write|edit)$",
+			"^hypa_(write|edit)$",
+			"^(write|edit|patch|apply)_",
+			"_(write|edit|patch)$",
+		],
+	},
+	{
+		name: "execute",
+		enabled: true,
+		locked: false,
+		patterns: [
+			"^(bash|powershell|codemode)$",
+			"^hypa_(shell|bash|exec|run|powershell)$",
+			"^(bash|shell|exec|run|spawn)_",
+			"_(bash|shell|exec)$",
+		],
+	},
+	{
+		// The permissions tool must stay open, or the model could lock itself out of every
+		// fix. This toolset is always on, and the tool cannot change it.
+		name: "permission",
+		enabled: true,
+		locked: true,
+		patterns: ["^permissions$"],
+	},
+];
 
 let tempCounter = 0;
 
 function builtinToolsets(): Toolset[] {
-	return RISKS.map((risk) => ({
-		name: risk,
-		risk,
-		patterns: [...BUILTIN_PATTERNS[risk]],
-		enabled: true,
+	return SHIPPED.map((entry) => ({
+		name: entry.name,
+		patterns: [...entry.patterns],
+		enabled: entry.enabled,
 		builtin: true,
+		locked: entry.locked,
 	}));
 }
 
 export function defaultState(): PermissionsState {
 	return {
-		version: 1,
-		flags: { read: true, write: false, execute: true },
+		version: 2,
 		scope: "project",
 		extra_paths: [],
 		sandboxes: { readonly_bash: false, no_network: false },
@@ -91,8 +112,6 @@ function readToolset(entry: unknown): Toolset | null {
 	if (!isRecord(entry)) return null;
 	const name = typeof entry.name === "string" ? entry.name.trim() : "";
 	if (name.length === 0) return null;
-	const risk = entry.risk;
-	if (risk !== "read" && risk !== "write" && risk !== "execute") return null;
 	if (!Array.isArray(entry.patterns)) return null;
 
 	const patterns: string[] = [];
@@ -105,44 +124,51 @@ function readToolset(entry: unknown): Toolset | null {
 	}
 	if (patterns.length === 0) return null;
 
-	return { name, risk, patterns, enabled: entry.enabled !== false, builtin: false };
+	return { name, patterns, enabled: entry.enabled !== false, builtin: false, locked: false };
 }
 
-function readCustomToolsets(value: unknown, builtins: Toolset[]): Toolset[] {
-	if (!Array.isArray(value)) return [];
-	const seen = new Set(builtins.map((toolset) => toolset.name.toLowerCase()));
-	const limit = Math.max(0, MAX_TOOLSETS - builtins.length);
-	const result: Toolset[] = [];
+/** Reads the stored toolsets in file order. A duplicate name keeps the first entry. */
+function readStoredToolsets(value: unknown): Map<string, Toolset> {
+	const stored = new Map<string, Toolset>();
+	if (!Array.isArray(value)) return stored;
 	for (const entry of value) {
 		const toolset = readToolset(entry);
 		if (toolset === null) continue;
 		const key = toolset.name.toLowerCase();
-		if (seen.has(key)) continue;
-		seen.add(key);
-		result.push(toolset);
-		if (result.length >= limit) break;
+		if (stored.has(key)) continue;
+		stored.set(key, toolset);
+		if (stored.size >= MAX_TOOLSETS) break;
 	}
-	return result;
+	return stored;
 }
 
 /** Accepts unknown JSON and returns a valid state, repaired against the defaults. */
 export function mergeState(raw: unknown): PermissionsState {
 	const defaults = defaultState();
 	const source: Record<string, unknown> = isRecord(raw) ? raw : {};
+	const stored = readStoredToolsets(source.toolsets);
+
+	// A shipped toolset keeps its own patterns. The file only sets the on/off state,
+	// and a locked toolset stays on whatever the file says.
+	const toolsets = defaults.toolsets.map((toolset) => {
+		const key = toolset.name.toLowerCase();
+		const saved = stored.get(key);
+		if (saved === undefined) return toolset;
+		stored.delete(key);
+		return toolset.locked ? toolset : { ...toolset, enabled: saved.enabled };
+	});
+	for (const toolset of stored.values()) {
+		if (toolsets.length >= MAX_TOOLSETS) break;
+		toolsets.push(toolset);
+	}
+
 	const state: PermissionsState = {
-		version: 1,
-		flags: { ...defaults.flags },
+		version: 2,
 		scope: readScope(source.scope) ?? defaults.scope,
 		extra_paths: readExtraPaths(source.extra_paths),
 		sandboxes: { ...defaults.sandboxes },
-		toolsets: [],
+		toolsets,
 	};
-
-	const flags = isRecord(source.flags) ? source.flags : {};
-	for (const risk of RISKS) {
-		const value = flags[risk];
-		if (typeof value === "boolean") state.flags[risk] = value;
-	}
 
 	const sandboxes = isRecord(source.sandboxes) ? source.sandboxes : {};
 	for (const key of SANDBOX_KEYS) {
@@ -150,7 +176,6 @@ export function mergeState(raw: unknown): PermissionsState {
 		if (typeof value === "boolean") state.sandboxes[key] = value;
 	}
 
-	state.toolsets = [...defaults.toolsets, ...readCustomToolsets(source.toolsets, defaults.toolsets)];
 	return state;
 }
 

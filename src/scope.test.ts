@@ -117,9 +117,7 @@ test("isAllowedPath blocks a write target that escapes through a symlink", () =>
 	withWorkspace((space) => {
 		const link = join(space.project, "link");
 		symlinkSync(space.outside, link, "dir");
-		const state = stateWith((current) => {
-			current.flags.write = true;
-		});
+		const state = stateWith();
 		assert.equal(isAllowedPath(state, space.project, join(link, "secret.txt")), false);
 		assert.equal(isAllowedPath(state, space.project, join(link, "new.txt")), false);
 		assert.equal(isAllowedPath(state, space.project, join(space.project, "new.txt")), true);

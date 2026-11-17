@@ -40,6 +40,12 @@ function stateWith(mutate: (state: PermissionsState) => void = () => {}): Permis
 	return state;
 }
 
+function setToolset(state: PermissionsState, name: string, enabled: boolean): void {
+	for (const toolset of state.toolsets) {
+		if (toolset.name === name) toolset.enabled = enabled;
+	}
+}
+
 function reasonOf(decision: GateDecision): string {
 	assert.equal(decision.block, true, "expected the call to be blocked");
 	if (!decision.block) return "";
@@ -49,11 +55,23 @@ function reasonOf(decision: GateDecision): string {
 test("the permissions tool is always allowed", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
-			current.flags = { read: false, write: false, execute: false };
+			for (const toolset of current.toolsets) toolset.enabled = false;
 			current.sandboxes = { readonly_bash: true, no_network: true };
 		});
 		const decision = evaluateCall(state, PERMISSIONS_TOOL_NAME, { path: "/etc/passwd" }, space.project);
 		assert.equal(decision.block, false);
+	});
+});
+
+test("the permission toolset sets the permissions tool apart", () => {
+	withWorkspace((space) => {
+		const state = stateWith();
+		const toolset = state.toolsets.find((entry) => entry.name === "permission");
+		assert.ok(toolset);
+		assert.equal(toolset.locked, true);
+		assert.equal(toolset.enabled, true);
+		assert.deepEqual(toolset.patterns, ["^permissions$"]);
+		assert.equal(evaluateCall(state, "permissions", {}, space.project).block, false);
 	});
 });
 
@@ -69,52 +87,46 @@ test("an unknown tool is blocked so the caller can ask", () => {
 	});
 });
 
-test("read is blocked when the read flag is off", () => {
+test("the default state blocks write tools because the write toolset is off", () => {
 	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.read = false;
-		});
-		const reason = reasonOf(evaluateCall(state, "read", { path: join(space.project, "file.txt") }, space.project));
-		assert.ok(reason.includes('"read"'));
-		assert.ok(reason.includes("set_flag"));
+		const state = stateWith();
+		for (const toolName of ["write", "edit"]) {
+			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
+			assert.ok(reason.includes("no toolset"));
+			assert.ok(reason.includes(`"${toolName}"`));
+		}
 	});
 });
 
-test("read is allowed when the read flag is on", () => {
+test("the write toolset allows write tools when it is on", () => {
 	withWorkspace((space) => {
-		const decision = evaluateCall(stateWith(), "read", { path: join(space.project, "file.txt") }, space.project);
-		assert.equal(decision.block, false);
-	});
-});
-
-test("write is blocked when the write flag is off", () => {
-	withWorkspace((space) => {
-		const reason = reasonOf(
-			evaluateCall(stateWith(), "write", { path: join(space.project, "file.txt") }, space.project),
-		);
-		assert.ok(reason.includes('"write"'));
-		assert.ok(reason.includes("set_flag"));
-	});
-});
-
-test("write is allowed when the write flag is on", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-		});
+		const state = stateWith((current) => setToolset(current, "write", true));
 		const decision = evaluateCall(state, "write", { path: join(space.project, "new.txt") }, space.project);
 		assert.equal(decision.block, false);
 	});
 });
 
-test("execute is blocked when the execute flag is off", () => {
+test("the execute toolset off blocks bash and codemode", () => {
 	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.execute = false;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "ls -la" }, space.project));
-		assert.ok(reason.includes('"execute"'));
-		assert.ok(reason.includes("set_flag"));
+		const state = stateWith((current) => setToolset(current, "execute", false));
+		for (const call of [
+			{ toolName: "bash", input: { command: "ls" } },
+			{ toolName: "codemode", input: {} },
+		]) {
+			const reason = reasonOf(evaluateCall(state, call.toolName, call.input, space.project));
+			assert.ok(reason.includes("no toolset"));
+		}
+	});
+});
+
+test("the read toolset off blocks the read tools but not bash", () => {
+	withWorkspace((space) => {
+		const state = stateWith((current) => setToolset(current, "read", false));
+		for (const toolName of ["read", "grep", "find", "ls"]) {
+			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
+			assert.ok(reason.includes("no toolset"));
+		}
+		assert.equal(evaluateCall(state, "bash", { command: "ls" }, space.project).block, false);
 	});
 });
 
@@ -162,30 +174,6 @@ test("bash ignores the file path scope in everywhere too", () => {
 	});
 });
 
-test("a read-only bash command is allowed", () => {
-	withWorkspace((space) => {
-		assert.equal(evaluateCall(stateWith(), "bash", { command: "ls -la" }, space.project).block, false);
-	});
-});
-
-test("a write redirect is allowed when write is on and the sandbox is off", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-		});
-		assert.equal(evaluateCall(state, "bash", { command: "echo hi > f" }, space.project).block, false);
-	});
-});
-
-test("curl is allowed when the no-network sandbox is off", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-		});
-		assert.equal(evaluateCall(state, "bash", { command: "curl https://example.com" }, space.project).block, false);
-	});
-});
-
 test("reasons start with Blocked and stay short", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
@@ -220,21 +208,16 @@ test("input without a path skips the scope check", () => {
 
 test("bash redirects are not part of the project path scope", () => {
 	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-		});
-		assert.equal(evaluateCall(state, "bash", { command: "echo hi 2>/dev/null" }, space.project).block, false);
-		assert.equal(evaluateCall(state, "bash", { command: "ls > /dev/null" }, space.project).block, false);
-		assert.equal(evaluateCall(state, "bash", { command: "echo hi > /tmp/out" }, space.project).block, false);
+		assert.equal(evaluateCall(stateWith(), "bash", { command: "echo hi 2>/dev/null" }, space.project).block, false);
+		assert.equal(evaluateCall(stateWith(), "bash", { command: "ls > /dev/null" }, space.project).block, false);
+		assert.equal(evaluateCall(stateWith(), "bash", { command: "echo hi > /tmp/out" }, space.project).block, false);
 	});
 });
 
 test("a write path that escapes through a symlink is blocked", () => {
 	withWorkspace((space) => {
 		symlinkSync(space.outside, join(space.project, "link"), "dir");
-		const state = stateWith((current) => {
-			current.flags.write = true;
-		});
+		const state = stateWith((current) => setToolset(current, "write", true));
 		const existing = join(space.project, "link", "secret.txt");
 		const created = join(space.project, "link", "new.txt");
 		for (const path of [existing, created]) {
@@ -262,12 +245,29 @@ test("a path with an @ prefix is normalized before the scope check", () => {
 	});
 });
 
-test("an unknown MCP tool is blocked with every flag on", () => {
+test("a matched tool with another path key is checked", () => {
+	withWorkspace((space) => {
+		const state = stateWith((current) =>
+			current.toolsets.push({
+				name: "fs",
+				patterns: ["^mcp__fs__"],
+				enabled: true,
+				builtin: false,
+				locked: false,
+			}),
+		);
+		assert.equal(evaluateCall(state, "mcp__fs__read", { file_path: "/etc/passwd" }, space.project).block, true);
+		assert.equal(
+			evaluateCall(state, "mcp__fs__read", { file_path: join(space.project, "file.txt") }, space.project).block,
+			false,
+		);
+	});
+});
+
+test("an unknown MCP tool is blocked", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
-			current.flags = { read: true, write: true, execute: true };
 			current.scope = "everywhere";
-			current.sandboxes = { readonly_bash: false, no_network: false };
 		});
 		const decision = evaluateCall(state, "mcp__foo__bar", {}, space.project);
 		assert.equal(decision.block, true);
@@ -278,56 +278,18 @@ test("an unknown MCP tool is blocked with every flag on", () => {
 	});
 });
 
-test("the write flag off blocks write tools but not read-only bash", () => {
+test("a custom toolset lets an MCP tool through", () => {
 	withWorkspace((space) => {
-		const state = stateWith();
-		for (const toolName of ["edit", "write"]) {
-			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
-			assert.ok(reason.includes('"write"'));
-			assert.ok(reason.includes("set_flag"));
-		}
-		assert.equal(evaluateCall(state, "bash", { command: "ls" }, space.project).block, false);
-		assert.equal(evaluateCall(state, "bash", { command: "ls -la" }, space.project).block, false);
-	});
-});
-
-test("the execute flag off blocks bash and codemode", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.execute = false;
-		});
-		for (const call of [
-			{ toolName: "bash", input: { command: "ls" } },
-			{ toolName: "codemode", input: {} },
-		]) {
-			const reason = reasonOf(evaluateCall(state, call.toolName, call.input, space.project));
-			assert.ok(reason.includes('"execute"'));
-		}
-	});
-});
-
-test("the read flag off blocks the read tools but not write", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.read = false;
-			current.flags.write = true;
-		});
-		for (const toolName of ["read", "grep", "find", "ls"]) {
-			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
-			assert.ok(reason.includes('"read"'));
-		}
-		assert.equal(evaluateCall(state, "write", { path: join(space.project, "a.txt") }, space.project).block, false);
-	});
-});
-
-test("a read tool with another path key is checked", () => {
-	withWorkspace((space) => {
-		const state = stateWith(() => {});
-		assert.equal(evaluateCall(state, "mcp__fs__read", { file_path: "/etc/passwd" }, space.project).block, true);
-		assert.equal(
-			evaluateCall(state, "mcp__fs__read", { file_path: join(space.project, "file.txt") }, space.project).block,
-			false,
+		const state = stateWith((current) =>
+			current.toolsets.push({
+				name: "mcp-foo",
+				patterns: ["^mcp__foo_"],
+				enabled: true,
+				builtin: false,
+				locked: false,
+			}),
 		);
+		assert.equal(evaluateCall(state, "mcp__foo__bar", {}, space.project).block, false);
 	});
 });
 

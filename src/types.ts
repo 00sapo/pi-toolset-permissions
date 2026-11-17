@@ -1,21 +1,19 @@
 /** Shared types for the permissions extension. No runtime imports here. */
 
-export type Risk = "read" | "write" | "execute";
-
 export type ScopeMode = "project" | "everywhere";
 
-/** One group of tool names. Builtin toolsets mirror the three risk flags. */
+/** One group of tool names that you turn on and off together. */
 export interface Toolset {
 	/** Stable identifier, unique across toolsets. */
 	name: string;
-	/** Risk class this toolset assigns to the tools it matches. */
-	risk: Risk;
 	/** JavaScript regular expression sources, tested against the tool name. */
 	patterns: string[];
-	/** A disabled custom toolset does not match anything. Builtin toolsets are always on. */
+	/** A disabled toolset does not match any tool. */
 	enabled: boolean;
-	/** True for the three toolsets that mirror the risk flags. */
+	/** True for the toolsets that the extension ships. A builtin cannot be deleted. */
 	builtin: boolean;
+	/** A locked toolset is always on, so the model cannot turn it off. */
+	locked: boolean;
 }
 
 export interface SandboxFlags {
@@ -26,8 +24,7 @@ export interface SandboxFlags {
 }
 
 export interface PermissionsState {
-	version: 1;
-	flags: Record<Risk, boolean>;
+	version: 2;
 	scope: ScopeMode;
 	/** Absolute directories allowed in project scope. */
 	extra_paths: string[];
@@ -41,14 +38,13 @@ export interface GatePatch {
 }
 
 /** Why the gate blocked a call. `unknown` means no toolset matched. */
-export type BlockKind = "unknown" | "flag" | "scope";
+export type BlockKind = "unknown" | "scope";
 
 export type GateDecision =
 	| { block: false; patch?: GatePatch }
 	| { block: true; reason: string; kind: BlockKind };
 
 export interface Classification {
-	risk: Risk;
 	/** Names of the toolsets that matched. */
 	toolsets: string[];
 }

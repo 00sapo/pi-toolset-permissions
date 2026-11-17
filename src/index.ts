@@ -6,7 +6,7 @@ import { evaluateCall } from "./gate.ts";
 import { wrapBash } from "./sandboxes.ts";
 import { MAX_TOOLSETS, StateStore } from "./state.ts";
 import { registerPermissionsTool, statusLine } from "./tool.ts";
-import type { Risk, Toolset } from "./types.ts";
+import type { Toolset } from "./types.ts";
 import { openPermissions } from "./ui.ts";
 
 const LOADED = Symbol.for("pi-toolset-permissions.loaded");
@@ -35,15 +35,13 @@ function toolsetName(store: StateStore, toolName: string): string {
 	return `${toolName} ${index}`;
 }
 
-function newToolset(pi: ExtensionAPI, store: StateStore, toolName: string): Toolset {
-	const annotations = pi.getAllTools().find((tool) => tool.name === toolName)?.annotations;
-	const risk: Risk = annotations?.readOnlyHint === true ? "read" : "execute";
+function newToolset(store: StateStore, toolName: string): Toolset {
 	return {
 		name: toolsetName(store, toolName),
-		risk,
 		patterns: [`^${escapeRegex(toolName)}$`],
 		enabled: true,
 		builtin: false,
+		locked: false,
 	};
 }
 
@@ -52,7 +50,6 @@ function newToolset(pi: ExtensionAPI, store: StateStore, toolName: string): Tool
  * matches the tool name, and the caller re-evaluates the call.
  */
 async function askUnknownTool(
-	pi: ExtensionAPI,
 	store: StateStore,
 	toolName: string,
 	ctx: ExtensionContext,
@@ -70,7 +67,7 @@ async function askUnknownTool(
 	if (answer === "Allow once") return "once";
 	if (answer !== "Always allow (add toolset)") return "deny";
 
-	const toolset = newToolset(pi, store, toolName);
+	const toolset = newToolset(store, toolName);
 	try {
 		store.update((current) => ({ ...current, toolsets: [...current.toolsets, toolset] }));
 	} catch (error) {
@@ -78,14 +75,14 @@ async function askUnknownTool(
 		return "deny";
 	}
 	if (ctx.hasUI) {
-		ctx.ui.notify(`Added the toolset ${toolset.name} with risk ${toolset.risk}.`, "info");
+		ctx.ui.notify(`Added the toolset ${toolset.name}.`, "info");
 	}
 	return "always";
 }
 
 export default function permissionsExtension(pi: ExtensionAPI): void {
 	// An installed copy and an explicit `-e` copy can load in the same process. The second
-	// copy would keep its own store and answer with stale flags, so it does nothing.
+	// copy would keep its own store and answer with stale state, so it does nothing.
 	const marker = globalThis as unknown as Record<symbol, boolean | undefined>;
 	if (marker[LOADED] === true) return;
 	marker[LOADED] = true;
@@ -174,7 +171,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				if (!first.block) return undefined;
 				if (first.kind !== "unknown") return { block: true, reason: first.reason };
 
-				const choice = await askUnknownTool(pi, store, event.toolName, ctx);
+				const choice = await askUnknownTool(store, event.toolName, ctx);
 				if (choice === "once") return undefined;
 				if (choice === "deny") return { block: true, reason: first.reason };
 

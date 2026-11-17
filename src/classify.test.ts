@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { classify } from "./classify.ts";
 import { defaultState } from "./state.ts";
-import type { Risk, Toolset } from "./types.ts";
+import type { PermissionsState, Toolset } from "./types.ts";
 
-const BUILTINS = defaultState().toolsets;
+function allOn(): PermissionsState {
+	const state = defaultState();
+	for (const toolset of state.toolsets) toolset.enabled = true;
+	return state;
+}
 
-const SHIPPED: Array<[string, Risk]> = [
+const EVERYTHING = allOn().toolsets;
+const DEFAULTS = defaultState().toolsets;
+
+function names(toolName: string, toolsets: Toolset[] = EVERYTHING): string[] {
+	return classify(toolName, toolsets)?.toolsets ?? [];
+}
+
+const SHIPPED: Array<[string, string]> = [
 	["read", "read"],
 	["ls", "read"],
 	["find", "read"],
@@ -35,130 +46,89 @@ const SHIPPED: Array<[string, Risk]> = [
 	["bash_run", "execute"],
 	["shell_exec", "execute"],
 	["task_bash", "execute"],
+	["permissions", "permission"],
 ];
 
-for (const [name, risk] of SHIPPED) {
-	test(`classifies ${name} as ${risk}`, () => {
-		const result = classify(name, BUILTINS);
-		assert.ok(result, `expected ${name} to match`);
-		assert.equal(result.risk, risk);
+for (const [name, toolset] of SHIPPED) {
+	test(`matches ${name} with the ${toolset} toolset`, () => {
+		assert.deepEqual(names(name), [toolset], `expected ${name} to match ${toolset}`);
 	});
 }
 
-test("unknown names return null", () => {
-	assert.equal(classify("frobnicate", BUILTINS), null);
-	assert.equal(classify("", BUILTINS), null);
-	assert.equal(classify("deploy", BUILTINS), null);
-	assert.equal(classify("permissions", BUILTINS), null);
+test("unknown names match nothing", () => {
+	assert.equal(classify("frobnicate", EVERYTHING), null);
+	assert.equal(classify("", EVERYTHING), null);
+	assert.equal(classify("deploy", EVERYTHING), null);
 });
 
 test("tool names are matched case insensitively", () => {
-	assert.equal(classify("BASH", BUILTINS)?.risk, "execute");
-	assert.equal(classify("Read", BUILTINS)?.risk, "read");
+	assert.deepEqual(names("BASH"), ["execute"]);
+	assert.deepEqual(names("Read"), ["read"]);
 });
 
 test("matching is unanchored, so users can write loose patterns", () => {
-	const toolsets: Toolset[] = [
-		{ name: "loose", risk: "read", patterns: ["deploy"], enabled: true, builtin: false },
-	];
-	assert.equal(classify("deploy_app", toolsets)?.risk, "read");
-});
-
-test("the most severe risk wins", () => {
-	const toolsets: Toolset[] = [
-		{ name: "low", risk: "read", patterns: ["^foo$"], enabled: true, builtin: false },
-		{ name: "mid", risk: "write", patterns: ["^foo$"], enabled: true, builtin: false },
-		{ name: "high", risk: "execute", patterns: ["^foo$"], enabled: true, builtin: false },
-	];
-	const result = classify("foo", toolsets);
-	assert.ok(result);
-	assert.equal(result.risk, "execute");
-	assert.deepEqual(result.toolsets, ["low", "mid", "high"]);
-});
-
-test("write wins over read when both match", () => {
-	const toolsets: Toolset[] = [
-		{ name: "reader", risk: "read", patterns: ["^mix$"], enabled: true, builtin: false },
-		{ name: "writer", risk: "write", patterns: ["^mix$"], enabled: true, builtin: false },
-	];
-	assert.equal(classify("mix", toolsets)?.risk, "write");
+	const toolsets: Toolset[] = [{ name: "loose", patterns: ["deploy"], enabled: true, builtin: false, locked: false }];
+	assert.deepEqual(names("deploy_app", toolsets), ["loose"]);
 });
 
 test("names are reported in state order", () => {
 	const toolsets: Toolset[] = [
-		{ name: "first", risk: "read", patterns: ["^foo$"], enabled: true, builtin: false },
-		{ name: "second", risk: "write", patterns: ["^foo$"], enabled: true, builtin: false },
+		{ name: "first", patterns: ["^foo$"], enabled: true, builtin: false, locked: false },
+		{ name: "second", patterns: ["^foo$"], enabled: true, builtin: false, locked: false },
 	];
-	assert.deepEqual(classify("foo", toolsets)?.toolsets, ["first", "second"]);
+	assert.deepEqual(names("foo", toolsets), ["first", "second"]);
 });
 
-test("a disabled custom toolset is skipped", () => {
+test("a disabled toolset is skipped", () => {
 	const toolsets: Toolset[] = [
-		{ name: "off", risk: "execute", patterns: ["^foo$"], enabled: false, builtin: false },
+		{ name: "off", patterns: ["^foo$"], enabled: false, builtin: false, locked: false },
 	];
 	assert.equal(classify("foo", toolsets), null);
 });
 
-test("builtin toolsets always apply, even with enabled false", () => {
-	const toolsets: Toolset[] = [
-		{ name: "read", risk: "read", patterns: ["^read$"], enabled: false, builtin: true },
-	];
-	assert.equal(classify("read", toolsets)?.risk, "read");
-});
-
-test("a custom toolset reclassifies an extension name", () => {
-	const toolsets: Toolset[] = [
-		...BUILTINS,
-		{ name: "deploy", risk: "execute", patterns: ["^deploy_"], enabled: true, builtin: false },
-	];
-	const result = classify("deploy_app", toolsets);
-	assert.ok(result);
-	assert.equal(result.risk, "execute");
-	assert.deepEqual(result.toolsets, ["deploy"]);
+test("the write tool is unknown at the default state", () => {
+	assert.equal(classify("write", DEFAULTS), null);
+	assert.equal(classify("edit", DEFAULTS), null);
+	assert.deepEqual(names("read", DEFAULTS), ["read"]);
+	assert.deepEqual(names("bash", DEFAULTS), ["execute"]);
 });
 
 test("an invalid pattern is skipped without throwing", () => {
 	const toolsets: Toolset[] = [
-		{ name: "broken", risk: "write", patterns: ["[", "^ok$"], enabled: true, builtin: false },
+		{ name: "broken", patterns: ["[", "^ok$"], enabled: true, builtin: false, locked: false },
 	];
-	assert.equal(classify("ok", toolsets)?.risk, "write");
+	assert.deepEqual(names("ok", toolsets), ["broken"]);
 	assert.equal(classify("other", toolsets), null);
 });
 
-test("a custom read toolset classifies an MCP tool as read when enabled", () => {
+test("a custom toolset adds an MCP name when on", () => {
 	const toolset: Toolset = {
 		name: "mcp-foo",
-		risk: "read",
 		patterns: ["^mcp__foo_"],
 		enabled: true,
 		builtin: false,
+		locked: false,
 	};
-	const result = classify("mcp__foo__bar", [...BUILTINS, toolset]);
-	assert.ok(result);
-	assert.equal(result.risk, "read");
-	assert.deepEqual(result.toolsets, ["mcp-foo"]);
-	assert.deepEqual(classify("mcp__other__bar", [...BUILTINS, toolset]), null);
+	assert.deepEqual(names("mcp__foo__bar", [...EVERYTHING, toolset]), ["mcp-foo"]);
+	assert.equal(classify("mcp__other__bar", [...EVERYTHING, toolset]), null);
 });
 
-test("a disabled custom read toolset leaves its tool unknown", () => {
+test("a disabled custom toolset leaves its tool unknown", () => {
 	const toolset: Toolset = {
 		name: "mcp-foo",
-		risk: "read",
 		patterns: ["^mcp__foo_"],
 		enabled: false,
 		builtin: false,
+		locked: false,
 	};
-	assert.equal(classify("mcp__foo__bar", [...BUILTINS, toolset]), null);
+	assert.equal(classify("mcp__foo__bar", [...EVERYTHING, toolset]), null);
 });
 
-test("execute wins over read when both toolsets match the same name", () => {
+test("two toolsets can match the same tool", () => {
 	const toolsets: Toolset[] = [
-		...BUILTINS,
-		{ name: "mcp-read", risk: "read", patterns: ["^mcp__foo_"], enabled: true, builtin: false },
-		{ name: "mcp-exec", risk: "execute", patterns: ["^mcp__foo_"], enabled: true, builtin: false },
+		...EVERYTHING,
+		{ name: "mcp-a", patterns: ["^mcp__foo_"], enabled: true, builtin: false, locked: false },
+		{ name: "mcp-b", patterns: ["^mcp__foo_"], enabled: true, builtin: false, locked: false },
 	];
-	const result = classify("mcp__foo__bar", toolsets);
-	assert.ok(result);
-	assert.equal(result.risk, "execute");
-	assert.deepEqual(result.toolsets, ["mcp-read", "mcp-exec"]);
+	assert.deepEqual(names("mcp__foo__bar", toolsets), ["mcp-a", "mcp-b"]);
 });

@@ -1,6 +1,4 @@
-import type { Classification, Risk, Toolset } from "./types.ts";
-
-const SEVERITY: Record<Risk, number> = { read: 0, write: 1, execute: 2 };
+import type { Classification, Toolset } from "./types.ts";
 
 const cache = new Map<string, RegExp | null>();
 
@@ -26,20 +24,12 @@ function matches(toolset: Toolset, toolName: string): boolean {
 	return false;
 }
 
-function applies(toolset: Toolset): boolean {
-	return toolset.builtin || toolset.enabled;
-}
-
-/** Maps a tool name to the most severe risk among the matching toolsets. */
+/** Returns the enabled toolsets that match a tool name, in state order. */
 export function classify(toolName: string, toolsets: Toolset[]): Classification | null {
-	let risk: Risk | null = null;
 	const names: string[] = [];
 	for (const toolset of toolsets) {
-		if (!applies(toolset)) continue;
-		if (!matches(toolset, toolName)) continue;
-		names.push(toolset.name);
-		if (risk === null || SEVERITY[toolset.risk] > SEVERITY[risk]) risk = toolset.risk;
+		if (!toolset.enabled) continue;
+		if (matches(toolset, toolName)) names.push(toolset.name);
 	}
-	if (risk === null) return null;
-	return { risk, toolsets: names };
+	return names.length === 0 ? null : { toolsets: names };
 }

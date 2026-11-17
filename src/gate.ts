@@ -1,4 +1,4 @@
-import type { BlockKind, GateDecision, PermissionsState, Risk } from "./types.ts";
+import type { BlockKind, GateDecision, PermissionsState } from "./types.ts";
 import { classify } from "./classify.ts";
 import { isAllowedPath, resolvePath, stripAt } from "./scope.ts";
 
@@ -31,11 +31,7 @@ function stringValues(input: Record<string, unknown>, keys: string[]): string[] 
 }
 
 function noToolsetReason(toolName: string): string {
-	return `Blocked: no toolset matches the tool "${toolName}". Ask the user to allow it, or add a toolset with the permissions tool (action "add_toolset").`;
-}
-
-function flagReason(risk: Risk, toolName: string): string {
-	return `Blocked: the "${risk}" flag is off, so the tool "${toolName}" is blocked. Ask the user to allow ${risk} tools, then call the permissions tool (action "set_flag").`;
+	return `Blocked: no toolset matches the tool "${toolName}". Ask the user to turn on a toolset, then call the permissions tool (action "set_toolset"), or add one (action "add_toolset").`;
 }
 
 function listPaths(paths: string[]): string {
@@ -55,20 +51,20 @@ export function evaluateCall(
 	input: Record<string, unknown>,
 	cwd: string,
 ): GateDecision {
+	// The permissions tool stays open even if the state says otherwise. Without it the
+	// model could not ask for a fix.
 	if (toolName === PERMISSIONS_TOOL_NAME) return { block: false };
 
-	const classification = classify(toolName, state.toolsets);
-	if (classification === null) return blocked("unknown", noToolsetReason(toolName));
+	const matched = classify(toolName, state.toolsets);
+	if (matched === null) return blocked("unknown", noToolsetReason(toolName));
 
-	const risk = classification.risk;
-	if (!state.flags[risk]) return blocked("flag", flagReason(risk, toolName));
+	const locked = new Set(state.toolsets.filter((toolset) => toolset.locked).map((toolset) => toolset.name));
+	if (matched.toolsets.some((name) => locked.has(name))) return { block: false };
 
-	if (risk === "read" || risk === "write") {
-		for (const path of stringValues(input, PATH_KEYS)) {
-			if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
-		}
+	for (const path of stringValues(input, PATH_KEYS)) {
+		if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
 	}
 
-	// Bash is one execute tool. The sandboxes run it inside the OS boundary.
+	// Bash is one tool. The sandboxes run it inside the OS boundary.
 	return { block: false };
 }
