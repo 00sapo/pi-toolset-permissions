@@ -13,6 +13,7 @@ permission tool"_
 ## Main features
 
 - Four toolsets that ship with the extension: read, write, execute, and permission.
+- Editable patterns. Press enter on a toolset to see its regular expressions and the tools that they match.
 - Custom toolsets that match tool names with regular expressions.
 - Two bash sandboxes: a read-only filesystem and no network.
 - One path scope for the file tools.
@@ -52,7 +53,7 @@ pi -e /path/to/pi-toolset-permissions/src/index.ts
 
 An installed copy reloads with `/reload`. A session that starts with `pi -e` reads the file at startup, so start pi again after an edit.
 
-The read-only sandbox needs bubblewrap on Linux. macOS uses the built-in `sandbox-exec`. Native Windows has no backend. Start pi inside WSL2 to use the Linux backend.
+The read-only sandbox needs `bubblewrap` on Linux. macOS uses the built-in `sandbox-exec`. Native Windows has no backend. Start pi inside WSL2 to use the Linux backend.
 
 ## Use
 
@@ -68,10 +69,10 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
  Permissions
 
  Toolsets
-   > read                    [ON]
-     write                   [OFF]
-     execute                 [ON]
-     permission              [ON]
+   > read                    [ON] 4 patterns
+     write                   [OFF] 4 patterns
+     execute                 [ON] 4 patterns
+     permission              [ON] 1 pattern
 
  Sandboxes
      Read-only filesystem    [OFF]
@@ -83,17 +84,18 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
  Paths
      /home/user/project  project root
 
- space/enter toggle · s scope · a add path · d remove path · esc close
+ space toggle · enter patterns · s scope · a add path · d remove path · esc close
 ```
 
 | Key | Action |
 | --- | --- |
 | up, down | move the selection |
-| space, enter | turn the selected toolset or sandbox on or off, or switch the scope |
+| space | turn the selected toolset or sandbox on or off, or switch the scope |
+| enter | open the patterns of the selected toolset. On a sandbox or the scope, enter does what space does |
 | s | switch the scope between project and everywhere |
 | a | add a directory to the paths |
 | d | remove the selected extra path |
-| esc | close the screen |
+| esc | close the screen, or leave the pattern screen |
 
 Each change is saved at once. The esc key never loses work.
 
@@ -122,9 +124,41 @@ The permission toolset is on at the start. If you turn it off, the model cannot 
 
 Ask the assistant to add a toolset. Give the name and the patterns. The dialog shows both before you agree.
 
-Press `d` on a toolset row to delete a custom toolset. A shipped toolset cannot be deleted. The extension writes the shipped patterns back the next time it reads the state file.
+Press `d` on a toolset row to delete a custom toolset. A shipped toolset cannot be deleted. You can change the patterns of a shipped toolset, and the state file keeps your change.
 
 When a toolset is off, its patterns match nothing. If no other toolset matches a tool, pi asks you about that tool.
+
+## The patterns
+
+Press enter on a toolset row to open its pattern screen.
+
+```text
+ Permissions › read  [ON]
+ builtin · 4 of 32 patterns · on, so these tools may run
+
+   > ^(read|ls|find|grep|tool_search)$    read, ls, find, grep
+     ^hypa_(read|ls|find|grep)$           hypa_read, hypa_ls, hypa_find, hypa_grep
+     ^(read|list|search|get)_             no tool
+     _(read|list|grep)$                   hypa_grep
+
+ enter edit · a add · d delete · space toggle · esc back
+```
+
+Each row holds one regular expression and the tool names that it matches. The extension tests each pattern against the name of every tool that pi knows, and it ignores case.
+
+The screen uses these keys:
+
+| Key | Action |
+| --- | --- |
+| space | turn the toolset on or off |
+| enter | edit the selected pattern |
+| a | add a pattern |
+| d | delete the selected pattern |
+| esc | go back to the toolset list |
+
+The editor checks each pattern. A pattern must compile as a JavaScript regular expression, must not be empty, and must be 500 characters at most. A toolset holds at least one pattern and at most 32.
+
+The four shipped toolsets start with default patterns. A change to one of them is saved like a custom toolset, and the state file holds the new list. To go back to the default list of one toolset, delete its entry from the state file and reload.
 
 ## The paths
 
@@ -177,7 +211,9 @@ The model uses one tool with eight actions.
 
 The `status` action only reads. The other seven actions ask you to agree before they change the state.
 
-The model cannot turn off the permission toolset. The tool reports that case and changes nothing.
+The model can turn off the permission toolset, because it is a normal toolset. If the model turns it off, the model cannot call the tool again in that session. Run `/permissions` to turn it back on.
+
+`set_toolset` changes the on/off state of a toolset. The model cannot change a pattern with the tool. You change a pattern on the screen, where the list of matches shows the effect at once.
 
 You can tell the assistant what you want in your own words. Examples:
 
@@ -199,6 +235,10 @@ Without a dialog, the call is blocked.
 
 The state lives in one file: `~/.pi/agent/permissions.json`.
 
+The file is plain JSON with two-space indentation and a final newline. It holds the toolsets, their patterns, the scope, the paths, and the sandboxes. It also holds your changes to the shipped toolsets, so it is the only file that you need to keep.
+
+The extension never writes the current time or another value that changes by itself. You can track the file in git and read a diff before you commit it.
+
 - `PI_PERMISSIONS_FILE` sets another path for the file.
 - `PI_CODING_AGENT_DIR` moves the agent directory.
 
@@ -206,7 +246,7 @@ The extension writes a temporary file and renames it. A crash cannot leave half 
 
 A missing file gives the default state. A corrupt file gives the default state too.
 
-A file from version 1 still loads. The extension drops the old flags, keeps the custom toolsets, and writes the shipped patterns back.
+A file from version 1 still loads. The extension drops the old flags, keeps the custom toolsets, and writes the default patterns for the shipped toolsets.
 
 ## Limits
 
