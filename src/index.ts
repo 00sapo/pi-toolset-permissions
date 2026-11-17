@@ -155,8 +155,15 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		pi.registerCommand("permissions", {
 			description: "Tool permissions, scope, and sandboxes",
 			handler: async (_args, ctx) => {
+				// The pattern screen shows the tool names that each pattern matches.
+				let toolNames: string[] = [];
 				try {
-					await openPermissions(store, ctx);
+					toolNames = pi.getAllTools().map((tool) => tool.name);
+				} catch {
+					toolNames = [];
+				}
+				try {
+					await openPermissions(store, ctx, toolNames);
 				} catch (error) {
 					if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
 				}

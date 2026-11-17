@@ -1,10 +1,11 @@
-/** The `/permissions` screen: one list with the toolsets, the sandboxes, the scope, and the paths. */
+/** The `/permissions` screen: toolsets, their patterns, the sandboxes, the scope, and the paths. */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SANDBOXES } from "./sandboxes.ts";
 import type { SandboxInfo } from "./sandboxes.ts";
 import { canonicalPath, resolveDirectory } from "./scope.ts";
-import { MAX_EXTRA_PATHS, type StateStore } from "./state.ts";
+import { appendPattern, matchingNames, removePattern, replacePattern } from "./patterns.ts";
+import { MAX_EXTRA_PATHS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns } from "./state.ts";
 import { statusText } from "./tool.ts";
 import type { PermissionsState, Toolset } from "./types.ts";
 
@@ -14,6 +15,8 @@ type Row =
 	| { kind: "scope" }
 	| { kind: "path"; path: string; root: boolean };
 
+type View = { kind: "main" } | { kind: "patterns"; name: string };
+
 const SECTION: Record<Row["kind"], string> = {
 	toolset: "Toolsets",
 	sandbox: "Sandboxes",
@@ -22,6 +25,7 @@ const SECTION: Record<Row["kind"], string> = {
 };
 
 const LABEL_WIDTH = 24;
+const NO_MATCH = "no tool";
 
 function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -32,14 +36,24 @@ function clip(value: string, width: number): string {
 	return `${value.slice(0, width - 1)}…`;
 }
 
-export async function openPermissions(store: StateStore, ctx: ExtensionContext): Promise<void> {
+/**
+ * The `/permissions` screen. `toolNames` is the list of tools that pi knows, so the
+ * pattern screen can show the tool names that each pattern matches.
+ */
+export async function openPermissions(
+	store: StateStore,
+	ctx: ExtensionContext,
+	toolNames: string[] = [],
+): Promise<void> {
 	if (ctx.mode !== "tui") {
 		ctx.ui.notify(statusText(store.get()), "info");
 		return;
 	}
 
 	await ctx.ui.custom<undefined>((tui, theme, keybindings, done) => {
+		let view: View = { kind: "main" };
 		let index = 0;
+		let patternIndex = 0;
 		let cachedWidth: number | undefined;
 		let cachedLines: string[] | undefined;
 
@@ -65,6 +79,9 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 
 		const onOff = (value: boolean): string => (value ? theme.fg("success", "[ON]") : theme.fg("muted", "[OFF]"));
 
+		const toolsetByName = (name: string): Toolset | undefined =>
+			store.get().toolsets.find((entry) => entry.name === name);
+
 		const buildRows = (state: PermissionsState): Row[] => {
 			const rows: Row[] = state.toolsets.map((toolset) => ({ kind: "toolset", toolset }));
 			for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
@@ -81,7 +98,8 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 			switch (item.kind) {
 				case "toolset": {
 					const name = clip(item.toolset.name, labelWidth).padEnd(labelWidth);
-					return `   ${marker} ${name}${onOff(item.toolset.enabled)}`;
+					const note = theme.fg("dim", ` ${item.toolset.patterns.length} pattern${item.toolset.patterns.length === 1 ? "" : "s"}`);
+					return `   ${marker} ${name}${onOff(item.toolset.enabled)}${note}`;
 				}
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
@@ -97,7 +115,7 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 			}
 		};
 
-		const renderScreen = (state: PermissionsState, width: number): string[] => {
+		const renderMain = (state: PermissionsState, width: number): string[] => {
 			const rows = buildRows(state);
 			const lines = [` ${theme.bold("Permissions")}`, ""];
 			let section: string | null = null;
@@ -110,9 +128,50 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 				}
 				lines.push(rowText(state, item, position === index, width));
 			});
-			lines.push("", theme.fg("dim", " space/enter toggle · s scope · a add path · d remove path · esc close"));
+			lines.push(
+				"",
+				theme.fg("dim", " space toggle · enter patterns · s scope · a add path · d remove path · esc close"),
+			);
 			return lines;
 		};
+
+		const renderPatterns = (state: PermissionsState, width: number): string[] => {
+			if (view.kind !== "patterns") return renderMain(state, width);
+			const name = view.name;
+			const toolset = state.toolsets.find((entry) => entry.name === name);
+			if (toolset === undefined) {
+				view = { kind: "main" };
+				return renderMain(state, width);
+			}
+
+			const inner = Math.max(20, width - 7);
+			const patternWidth = Math.max(12, Math.min(60, Math.floor(inner * 0.55)));
+			const matchWidth = Math.max(8, inner - patternWidth - 2);
+			const kind = toolset.builtin ? "builtin" : "custom";
+
+			const lines = [
+				` ${theme.bold("Permissions")} ${theme.fg("dim", "›")} ${theme.bold(clip(toolset.name, Math.max(8, width - 24)))}  ${onOff(toolset.enabled)}`,
+				theme.fg(
+					"dim",
+					` ${kind} · ${toolset.patterns.length} of ${MAX_TOOLSET_PATTERNS} patterns · ${toolset.enabled ? "on, so these tools may run" : "off, so these tools are blocked"}`,
+				),
+				"",
+			];
+
+			toolset.patterns.forEach((pattern, position) => {
+				const marker = position === patternIndex ? theme.fg("accent", ">") : " ";
+				const shown = clip(pattern, patternWidth).padEnd(patternWidth);
+				const names = matchingNames(pattern, toolNames);
+				const matches = theme.fg("dim", clip(names.length === 0 ? NO_MATCH : names.join(", "), matchWidth));
+				lines.push(`   ${marker} ${shown}  ${matches}`);
+			});
+
+			lines.push("", theme.fg("dim", " enter edit · a add · d delete · space toggle · esc back"));
+			return lines;
+		};
+
+		const renderScreen = (state: PermissionsState, width: number): string[] =>
+			view.kind === "patterns" ? renderPatterns(state, width) : renderMain(state, width);
 
 		const cycleScope = (): void => {
 			update((current) => ({ ...current, scope: current.scope === "project" ? "everywhere" : "project" }));
@@ -164,9 +223,85 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 			refresh();
 		};
 
-		const activate = (): void => {
-			const state = store.get();
-			const item = buildRows(state)[index];
+		/** Saves a new pattern list. The state file holds the list, so it must load again. */
+		const savePatterns = (name: string, next: string[]): boolean => {
+			const checked = checkPatterns(next);
+			if ("error" in checked) {
+				notify(checked.error, "error");
+				return false;
+			}
+			const patterns = checked.patterns;
+			try {
+				store.update((current) => ({
+					...current,
+					toolsets: current.toolsets.map((entry) =>
+						entry.name === name ? { ...entry, patterns } : entry,
+					),
+				}));
+			} catch (error) {
+				notify(`The change was not saved: ${messageOf(error)}`, "error");
+				return false;
+			}
+			return true;
+		};
+
+		const addPattern = async (name: string): Promise<void> => {
+			const before = toolsetByName(name);
+			if (before === undefined) return;
+			if (before.patterns.length >= MAX_TOOLSET_PATTERNS) {
+				notify(`The toolset already holds ${MAX_TOOLSET_PATTERNS} patterns. Delete one first.`, "warning");
+				refresh();
+				return;
+			}
+			const value = await ctx.ui.input(`Add a pattern for ${name}`, "^my_tool$");
+			if (value === undefined) return;
+			const toolset = toolsetByName(name);
+			if (toolset === undefined) return;
+			const result = appendPattern(toolset.patterns, value);
+			if ("error" in result) {
+				notify(result.error, "error");
+				refresh();
+				return;
+			}
+			if (savePatterns(name, result.patterns)) patternIndex = result.patterns.length - 1;
+			refresh();
+		};
+
+		const editPattern = async (name: string, position: number): Promise<void> => {
+			const before = toolsetByName(name);
+			const old = before?.patterns[position];
+			if (old === undefined) return;
+			const value = await ctx.ui.editor(`Edit a pattern for ${name}`, old);
+			if (value === undefined) return;
+			const toolset = toolsetByName(name);
+			if (toolset === undefined) return;
+			const result = replacePattern(toolset.patterns, position, value);
+			if ("error" in result) {
+				notify(result.error, "error");
+				refresh();
+				return;
+			}
+			savePatterns(name, result.patterns);
+			refresh();
+		};
+
+		const deletePattern = (name: string, position: number): void => {
+			const toolset = toolsetByName(name);
+			if (toolset === undefined) return;
+			const result = removePattern(toolset.patterns, position);
+			if ("error" in result) {
+				notify(result.error, "warning");
+				refresh();
+				return;
+			}
+			if (savePatterns(name, result.patterns)) {
+				patternIndex = Math.max(0, Math.min(position, result.patterns.length - 1));
+			}
+			refresh();
+		};
+
+		const toggleSelected = (): void => {
+			const item = buildRows(store.get())[index];
 			if (item === undefined) return;
 			if (item.kind === "toolset") toggleToolset(item.toolset);
 			else if (item.kind === "sandbox") toggleSandbox(item.info);
@@ -174,7 +309,67 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 			refresh();
 		};
 
-		const handleInput = (data: string): void => {
+		const openSelected = (): void => {
+			const item = buildRows(store.get())[index];
+			if (item === undefined) return;
+			if (item.kind !== "toolset") {
+				toggleSelected();
+				return;
+			}
+			view = { kind: "patterns", name: item.toolset.name };
+			patternIndex = 0;
+			refresh();
+		};
+
+		const movePattern = (step: number): void => {
+			const toolset = view.kind === "patterns" ? toolsetByName(view.name) : undefined;
+			if (toolset === undefined || toolset.patterns.length === 0) return;
+			const count = toolset.patterns.length;
+			patternIndex = (patternIndex + step + count) % count;
+			refresh();
+		};
+
+		const handlePatternsInput = (data: string): void => {
+			if (view.kind !== "patterns") return;
+			const toolset = toolsetByName(view.name);
+			if (toolset === undefined) {
+				view = { kind: "main" };
+				refresh();
+				return;
+			}
+			if (keybindings.matches(data, "tui.select.cancel")) {
+				view = { kind: "main" };
+				refresh();
+				return;
+			}
+			if (keybindings.matches(data, "tui.select.up")) {
+				movePattern(-1);
+				return;
+			}
+			if (keybindings.matches(data, "tui.select.down")) {
+				movePattern(1);
+				return;
+			}
+			patternIndex = Math.min(patternIndex, Math.max(0, toolset.patterns.length - 1));
+			if (data === "a") {
+				void addPattern(toolset.name);
+				return;
+			}
+			if (data === "d") {
+				deletePattern(toolset.name, patternIndex);
+				return;
+			}
+			if (data === " ") {
+				toggleToolset(toolset);
+				refresh();
+				return;
+			}
+			if (keybindings.matches(data, "tui.select.confirm")) {
+				void editPattern(toolset.name, patternIndex);
+			}
+		};
+
+		const handleMainInput = (data: string): void => {
 			if (keybindings.matches(data, "tui.select.cancel")) {
 				done(undefined);
 				return;
@@ -213,9 +408,18 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 				removePath(item.path);
 				return;
 			}
-			if (data === " " || keybindings.matches(data, "tui.select.confirm")) {
-				activate();
+			if (data === " ") {
+				toggleSelected();
+				return;
 			}
+			if (keybindings.matches(data, "tui.select.confirm")) {
+				openSelected();
+			}
+		};
+
+		const handleInput = (data: string): void => {
+			if (view.kind === "patterns") handlePatternsInput(data);
+			else handleMainInput(data);
 		};
 
 		return {
