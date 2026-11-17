@@ -30,7 +30,7 @@ A sandbox is an operating-system boundary for shell commands.
 
 A path scope is the set of directories that file tools can touch. Project scope allows the project directory and the extra paths. Everywhere scope removes the path limit.
 
-The permission toolset holds the `permissions` tool. That toolset is locked and always on. Without the tool, the model cannot ask you for a fix.
+The permission toolset holds the `permissions` tool. It is a normal toolset. If you turn it off, the model cannot call that tool, but the `/permissions` command still works. Use the command to turn the toolset back on.
 
 Bash is one tool. Its patterns sit in the execute toolset. The sandbox is a second layer. It starts the whole call inside the boundary, and it does not read the command text.
 
@@ -71,7 +71,7 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
    > read                    [ON]
      write                   [OFF]
      execute                 [ON]
-     permission              [ON] locked
+     permission              [ON]
 
  Sandboxes
      Read-only filesystem    [OFF]
@@ -104,7 +104,7 @@ The default state:
 | Read toolset | on |
 | Write toolset | off |
 | Execute toolset | on |
-| Permission toolset | on, locked |
+| Permission toolset | on |
 | Path scope | project |
 | Extra paths | none |
 | Read-only filesystem sandbox | off |
@@ -118,7 +118,7 @@ The extension ships four toolsets. Read tools, write tools, and execute tools ho
 
 Press space to turn a toolset on or off. A toolset that is off matches no tool.
 
-The permission toolset is locked. It stays on, and the screen and the model cannot turn it off. The model can still ask you to change every other toolset.
+The permission toolset is on at the start. If you turn it off, the model cannot ask you for a change. Open the screen with `/permissions` and turn the toolset back on. The screen is not a tool, so it always opens.
 
 Ask the assistant to add a toolset. Give the name and the patterns. The dialog shows both before you agree.
 
