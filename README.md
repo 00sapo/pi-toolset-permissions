@@ -25,7 +25,7 @@ After you edit the code of an installed copy, run `/reload` in pi.
 A run started with `pi -e` reads the file when pi starts, so restart pi instead.
 Run `/permissions` to open the settings screen.
 
-The read-only sandbox needs bubblewrap (`bwrap`). The no-network sandbox also accepts `unshare` from util-linux.
+The read-only sandbox needs bubblewrap (`bwrap`) on Linux. The no-network sandbox also accepts `unshare` from util-linux. macOS uses the built-in `sandbox-exec`. Native Windows needs WSL2.
 
 ## Default state
 
@@ -115,17 +115,22 @@ The `permissions` tool always passes the gate. It asks the user itself.
 
 The read-only filesystem sandbox runs every bash command with the root directory bound read-only.
 The kernel rejects any write, including writes to `/tmp`, so no command text is checked.
-The sandbox needs `bwrap` from bubblewrap.
 
-The no-network sandbox runs every bash command in a separate network namespace.
+On Linux the sandbox needs `bwrap` from bubblewrap.
+On macOS it uses Seatbelt through `sandbox-exec`, and it denies `file-write*` except for `/dev/null`, `/dev/stdout`, `/dev/stderr`, and `/dev/tty`.
+
+On Linux the no-network sandbox runs every bash command in a separate network namespace, and it needs `bwrap` or `unshare` from util-linux.
+On macOS it adds `(deny network*)` to the Seatbelt profile.
 Every network operation fails, including name resolution.
-It needs `bwrap` from bubblewrap, or `unshare` from util-linux as a fallback for the network isolation alone.
 
 Both sandboxes can be on at once.
-When the program that a sandbox needs is missing, the bash call fails with a clear message. It never runs unsandboxed.
+When the program that a sandbox needs is missing, the shell call fails with a clear message. It never runs unsandboxed.
 A sandbox works on its own: the write flag does not change it, and it does not change the write flag.
 
-Commands that you type yourself with `!` are not sandboxed. The sandboxes apply to the `bash` tool that the model calls.
+Native Windows has no backend in this extension, so the `bash` and `powershell` tools fail closed while a sandbox is on.
+Run pi inside WSL2 to get the Linux sandbox with bubblewrap. The pi containerization guide also covers whole-process isolation with Docker.
+
+Commands that you type yourself with `!` are not sandboxed. The sandboxes apply to the shell tools that the model calls.
 
 ## State file
 
@@ -137,10 +142,11 @@ A missing file gives the default state. A corrupt file gives the default state t
 
 ## Limitations
 
-The sandboxes use Linux namespaces. The read-only sandbox needs bubblewrap.
-On macOS, bubblewrap is not available through the usual package managers, so the sandboxes fail with a message. Use a container for that case.
+The sandboxes use kernel mechanisms per platform: namespaces on Linux, Seatbelt on macOS.
+On native Windows they are not available, and the shell tools fail closed.
+Seatbelt is deprecated by Apple but still present on current macOS versions. If `sandbox-exec` is missing, the call fails with a message.
 
-A sandbox limits the process tree that the `bash` tool starts. It does not limit pi itself, other tools, or commands that you type with `!`.
+A sandbox limits the process tree that the shell tools start. It does not limit pi itself, other tools, or commands that you type with `!`.
 The operating system is the real boundary. User accounts, containers, and network policy hold a process back even when the extension is wrong.
 
 A command that changes files through a server or a device outside the filesystem can still have an effect. The read-only sandbox covers the filesystem, not every device.
