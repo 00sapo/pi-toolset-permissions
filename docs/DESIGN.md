@@ -8,7 +8,7 @@ A toolset is a group of tool names that turn on and off together. A pattern is a
 
 A path scope is the set of directories that file tools can touch. A sandbox is an operating-system boundary for shell commands.
 
-The permission toolset holds the `permissions` tool. It is locked, so the model cannot turn it off.
+The permission toolset holds the `permissions` tool. It is a normal toolset, so the model and the screen can turn it off.
 
 ## Layers
 
@@ -24,18 +24,16 @@ The permission toolset holds the `permissions` tool. It is locked, so the model 
 
 1. The model calls a tool.
 2. Pi sends the call to the `tool_call` handler.
-3. The gate returns early for the `permissions` tool. Nothing blocks it.
-4. The classifier collects the enabled toolsets that match the tool name.
-5. If none match, the extension asks the user. A refusal blocks the call.
-6. If a locked toolset matches, the call continues.
-7. If a file tool names a path outside the scope, the gate blocks the call.
-8. The bash wrapper adds the sandbox command. A missing backend blocks the call.
-9. The tool starts.
+3. The classifier collects the enabled toolsets that match the tool name.
+4. If none match, the extension asks the user. A refusal blocks the call.
+5. If a file tool names a path outside the scope, the gate blocks the call.
+6. The bash wrapper adds the sandbox command. A missing backend blocks the call.
+7. The tool starts.
 
 ## Decisions
 
 - Deny a tool that no toolset matches, but ask the user first. A silent allow is not safe, and a silent deny stops work.
-- Keep the permissions tool open. A model that switches it off locks itself out of every fix. The gate returns early for that name, and the tool refuses to turn off the locked toolset.
+- Treat the permissions tool as a normal tool. The permission toolset turns it on and off, like the other three sets. The `/permissions` command runs outside the gate, so the user can always turn the toolset back on.
 - Keep the permission toolset in the state file. The screen shows it next to the other toolsets, so the user sees the whole picture.
 - Treat bash as one tool. The execute toolset sets the outer limit, and the sandbox sets the inner limit. Command text analysis is fragile, so the extension does not use it.
 - Put the sandbox in the kernel. Linux uses bubblewrap or unshare, macOS uses Seatbelt, and native Windows fails closed.
@@ -61,11 +59,11 @@ The permission toolset holds the `permissions` tool. It is locked, so the model 
 
 ## State
 
-The defaults are the read toolset on, the write toolset off, the execute toolset on, the permission toolset on and locked, project scope, no extra paths, and both sandboxes off.
+The defaults are the read toolset on, the write toolset off, the execute toolset on, the permission toolset on, project scope, no extra paths, and both sandboxes off.
 
 `mergeState` accepts unknown JSON and repairs it. It fills missing fields, drops invalid toolsets, restores the four shipped toolsets, and caps the list sizes.
 
-A stored shipped toolset keeps its pattern set from the code. The file sets only its on/off state. A locked shipped toolset stays on, whatever the file says. A version 1 file loses its flags and keeps its custom toolsets.
+A stored shipped toolset keeps its pattern set from the code. The file sets only its on/off state. A version 1 file loses its flags and keeps its custom toolsets.
 
 `StateStore.update` reads the file again before it applies a change. Two pi processes can then keep both changes.
 
