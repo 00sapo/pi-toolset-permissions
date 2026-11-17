@@ -1,6 +1,6 @@
 {
 	"name": "pi-toolset-permissions",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Toolsets, path scope, and bash sandboxes for pi, with patterns that you can edit during a session",
 	"type": "module",
 	"license": "GPL-3.0-only",
@@ -16,7 +16,8 @@
 	},
 	"files": ["src", "!src/*.test.ts", "docs", "README.md", "LICENSE"],
 	"pi": {
-		"extensions": ["./src/index.ts"]
+		"extensions": ["./src/index.ts"],
+		"image": "https://raw.githubusercontent.com/00sapo/pi-toolset-permissions/v0.1.1/docs/preview.png"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
