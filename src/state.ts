@@ -5,7 +5,7 @@ import type { PermissionsState, SandboxFlags, ScopeMode, Toolset } from "./types
 
 export const MAX_EXTRA_PATHS = 100;
 export const MAX_TOOLSETS = 50;
-const MAX_TOOLSET_PATTERNS = 32;
+export const MAX_TOOLSET_PATTERNS = 32;
 const MAX_PATTERN_LENGTH = 500;
 
 const SANDBOX_KEYS: Array<keyof SandboxFlags> = ["readonly_bash", "no_network"];
@@ -85,6 +85,28 @@ function compiles(pattern: string): boolean {
 	}
 }
 
+/**
+ * Checks a list of regular expression sources. Returns the accepted list in order, or
+ * the first error. Both the state file and the pattern editor use this function, so a
+ * saved list always loads again.
+ */
+export function checkPatterns(raw: unknown[]): { patterns: string[] } | { error: string } {
+	const patterns: string[] = [];
+	for (const value of raw) {
+		if (typeof value !== "string") return { error: "A pattern must be text." };
+		const source = value.trim();
+		if (source === "") return { error: "A pattern is empty." };
+		if (source.length > MAX_PATTERN_LENGTH) {
+			return { error: `A pattern is longer than ${MAX_PATTERN_LENGTH} characters.` };
+		}
+		if (!compiles(source)) return { error: `The pattern ${source} does not compile.` };
+		patterns.push(source);
+		if (patterns.length >= MAX_TOOLSET_PATTERNS) break;
+	}
+	if (patterns.length === 0) return { error: "A toolset needs at least one pattern." };
+	return { patterns };
+}
+
 function readScope(value: unknown): ScopeMode | null {
 	return value === "project" || value === "everywhere" ? value : null;
 }
@@ -109,17 +131,10 @@ function readToolset(entry: unknown): Toolset | null {
 	if (name.length === 0) return null;
 	if (!Array.isArray(entry.patterns)) return null;
 
-	const patterns: string[] = [];
-	for (const pattern of entry.patterns) {
-		if (typeof pattern !== "string" || pattern.length === 0) return null;
-		if (pattern.length > MAX_PATTERN_LENGTH) return null;
-		if (!compiles(pattern)) return null;
-		patterns.push(pattern);
-		if (patterns.length >= MAX_TOOLSET_PATTERNS) break;
-	}
-	if (patterns.length === 0) return null;
+	const checked = checkPatterns(entry.patterns);
+	if ("error" in checked) return null;
 
-	return { name, patterns, enabled: entry.enabled !== false, builtin: false };
+	return { name, patterns: checked.patterns, enabled: entry.enabled !== false, builtin: false };
 }
 
 /** Reads the stored toolsets in file order. A duplicate name keeps the first entry. */
@@ -143,13 +158,14 @@ export function mergeState(raw: unknown): PermissionsState {
 	const source: Record<string, unknown> = isRecord(raw) ? raw : {};
 	const stored = readStoredToolsets(source.toolsets);
 
-	// A shipped toolset keeps its own patterns. The file only sets the on/off state.
+	// A shipped toolset keeps its name and its builtin mark. The file sets the on/off
+	// state and the pattern list, so a user can tune the default patterns.
 	const toolsets = defaults.toolsets.map((toolset) => {
 		const key = toolset.name.toLowerCase();
 		const saved = stored.get(key);
 		if (saved === undefined) return toolset;
 		stored.delete(key);
-		return { ...toolset, enabled: saved.enabled };
+		return { ...toolset, patterns: saved.patterns, enabled: saved.enabled };
 	});
 	for (const toolset of stored.values()) {
 		if (toolsets.length >= MAX_TOOLSETS) break;

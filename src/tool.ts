@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import { SANDBOXES } from "./sandboxes.ts";
 import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
-import { MAX_EXTRA_PATHS, MAX_TOOLSETS, type StateStore } from "./state.ts";
+import { MAX_EXTRA_PATHS, MAX_TOOLSETS, checkPatterns, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 
 const parameters = Type.Object({
@@ -171,20 +171,7 @@ async function removePath(env: ToolEnv): Promise<ToolOutcome> {
 
 function readPatterns(raw: string[] | undefined): { patterns: string[] } | { error: string } {
 	if (raw === undefined || raw.length === 0) return { error: "add_toolset needs at least one pattern." };
-	const patterns: string[] = [];
-	for (const pattern of raw) {
-		const source = pattern.trim();
-		if (source === "") return { error: "A pattern is empty." };
-		if (source.length > 500) return { error: "A pattern is longer than 500 characters." };
-		try {
-			new RegExp(source, "i");
-		} catch (error) {
-			return { error: `The pattern ${source} does not compile: ${messageOf(error)}` };
-		}
-		patterns.push(source);
-		if (patterns.length >= 32) break;
-	}
-	return { patterns };
+	return checkPatterns(raw);
 }
 
 async function addToolset(env: ToolEnv): Promise<ToolOutcome> {

@@ -3,7 +3,17 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { MAX_TOOLSETS, StateStore, defaultState, loadState, mergeState, saveState, statePath } from "./state.ts";
+import {
+	MAX_TOOLSETS,
+	MAX_TOOLSET_PATTERNS,
+	StateStore,
+	checkPatterns,
+	defaultState,
+	loadState,
+	mergeState,
+	saveState,
+	statePath,
+} from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 
 function tempDir(): { dir: string; cleanup: () => void } {
@@ -109,15 +119,32 @@ test("mergeState drops duplicate toolset names", () => {
 	assert.equal(names.filter((name) => name === "dup").length, 1);
 });
 
-test("mergeState keeps the shipped patterns and ignores a pattern edit", () => {
+test("mergeState takes a pattern edit for a shipped toolset", () => {
 	const state = mergeState({
-		toolsets: [{ name: "read", patterns: ["^evil$"], enabled: true, builtin: true }],
+		toolsets: [{ name: "read", patterns: ["^read$", "^cat_"], enabled: true, builtin: true }],
 	});
 	const read = state.toolsets.find((toolset) => toolset.name === "read");
 	assert.ok(read);
 	assert.equal(read.builtin, true);
-	assert.ok(read.patterns.includes("^(read|ls|find|grep|tool_search)$"));
-	assert.ok(!read.patterns.includes("^evil$"));
+	assert.equal(read.enabled, true);
+	assert.deepEqual(read.patterns, ["^read$", "^cat_"]);
+});
+
+test("mergeState keeps the shipped patterns when a stored pattern list is invalid", () => {
+	const defaults = defaultState().toolsets.find((toolset) => toolset.name === "read");
+	const state = mergeState({
+		toolsets: [
+			{ name: "read", patterns: ["["], enabled: false },
+			{ name: "execute", patterns: [], enabled: false },
+		],
+	});
+	const read = state.toolsets.find((toolset) => toolset.name === "read");
+	const execute = state.toolsets.find((toolset) => toolset.name === "execute");
+	assert.ok(read && defaults);
+	assert.deepEqual(read.patterns, defaults.patterns);
+	assert.equal(read.enabled, true);
+	assert.ok(execute);
+	assert.equal(execute.enabled, true);
 });
 
 test("mergeState keeps a shipped toolset toggle", () => {
@@ -139,7 +166,7 @@ test("mergeState lets the file turn the permission toolset off", () => {
 	const permission = state.toolsets.find((toolset) => toolset.name === "permission");
 	assert.ok(permission);
 	assert.equal(permission.enabled, false);
-	assert.deepEqual(permission.patterns, ["^permissions$"]);
+	assert.deepEqual(permission.patterns, ["^nothing$"]);
 });
 
 test("mergeState defaults a custom toolset to enabled", () => {
@@ -165,6 +192,24 @@ test("mergeState accepts junk input", () => {
 		assert.equal(state.scope, "project");
 		assert.equal(state.toolsets.length, 4);
 	}
+});
+
+test("checkPatterns trims each entry", () => {
+	assert.deepEqual(checkPatterns([" ^a$ ", "^b$"]), { patterns: ["^a$", "^b$"] });
+});
+
+test("checkPatterns reports the first bad entry", () => {
+	for (const raw of [[], ["["], [""], [42], ["x".repeat(501)]] as unknown[][]) {
+		const checked = checkPatterns(raw);
+		assert.ok("error" in checked, `expected an error for ${JSON.stringify(raw)}`);
+	}
+});
+
+test("checkPatterns caps the list", () => {
+	const many = Array.from({ length: MAX_TOOLSET_PATTERNS + 8 }, (_, position) => `^tool${position}$`);
+	const checked = checkPatterns(many);
+	assert.ok("patterns" in checked);
+	assert.equal(checked.patterns.length, MAX_TOOLSET_PATTERNS);
 });
 
 test("loadState returns defaults for a missing file", () => {
@@ -202,6 +247,22 @@ test("saveState and loadState round trip", () => {
 		saveState(state, file);
 		assert.deepEqual(loadState(file), state);
 		assert.deepEqual(readdirSync(join(dir, "nested")), ["permissions.json"]);
+	});
+});
+
+test("saveState and loadState keep a pattern edit of a shipped toolset", () => {
+	withTempDir((dir) => {
+		const file = join(dir, "permissions.json");
+		const state = defaultState();
+		const read = state.toolsets.find((toolset) => toolset.name === "read");
+		assert.ok(read);
+		read.patterns = ["^read$", "^cat_"];
+		saveState(state, file);
+		const loaded = loadState(file);
+		const stored = loaded.toolsets.find((toolset) => toolset.name === "read");
+		assert.ok(stored);
+		assert.equal(stored.builtin, true);
+		assert.deepEqual(stored.patterns, ["^read$", "^cat_"]);
 	});
 });
 
