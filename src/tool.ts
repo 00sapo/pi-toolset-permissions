@@ -73,7 +73,7 @@ export function statusLine(state: PermissionsState): string {
 export function statusText(state: PermissionsState): string {
 	const lines = [`toolsets (${state.toolsets.length}):`];
 	for (const toolset of state.toolsets) {
-		const marker = toolset.locked ? "locked" : toolset.builtin ? "builtin" : "custom";
+		const marker = toolset.builtin ? "builtin" : "custom";
 		lines.push(`  ${toolset.name} ${onOff(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
 	}
 	lines.push(
@@ -206,7 +206,7 @@ async function addToolset(env: ToolEnv): Promise<ToolOutcome> {
 		env,
 		(current) => ({
 			...current,
-			toolsets: [...current.toolsets, { name, patterns, enabled: true, builtin: false, locked: false }],
+			toolsets: [...current.toolsets, { name, patterns, enabled: true, builtin: false }],
 		}),
 		`Added the toolset ${name}.`,
 	);
@@ -235,12 +235,6 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 	if (enabled === undefined) return { text: "set_toolset needs enabled: true or false.", isError: true };
 	const toolset = env.store.get().toolsets.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
 	if (toolset === undefined) return { text: `No toolset is named ${name}.`, isError: true };
-	if (toolset.locked) {
-		return {
-			text: `The toolset ${name} is locked. It protects the permissions tool, so it is always on.`,
-			isError: true,
-		};
-	}
 	if (toolset.enabled === enabled) return { text: `The toolset ${name} is already ${enabled ? "on" : "off"}.` };
 	const title = `Turn ${enabled ? "on" : "off"} toolset ${name}?`;
 	const message = `enabled: ${onOff(toolset.enabled)} → ${onOff(enabled)}\n\n${

@@ -41,7 +41,6 @@ function newToolset(store: StateStore, toolName: string): Toolset {
 		patterns: [`^${escapeRegex(toolName)}$`],
 		enabled: true,
 		builtin: false,
-		locked: false,
 	};
 }
 

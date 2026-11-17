@@ -11,11 +11,10 @@ const MAX_PATTERN_LENGTH = 500;
 const SANDBOX_KEYS: Array<keyof SandboxFlags> = ["readonly_bash", "no_network"];
 
 /** The toolsets that the extension ships. `write` starts off. */
-const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; locked: boolean; patterns: string[] }> = [
+const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[] }> = [
 	{
 		name: "read",
 		enabled: true,
-		locked: false,
 		patterns: [
 			"^(read|ls|find|grep|tool_search)$",
 			"^hypa_(read|ls|find|grep)$",
@@ -26,7 +25,6 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; locked: boolean; 
 	{
 		name: "write",
 		enabled: false,
-		locked: false,
 		patterns: [
 			"^(write|edit)$",
 			"^hypa_(write|edit)$",
@@ -37,7 +35,6 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; locked: boolean; 
 	{
 		name: "execute",
 		enabled: true,
-		locked: false,
 		patterns: [
 			"^(bash|powershell|codemode)$",
 			"^hypa_(shell|bash|exec|run|powershell)$",
@@ -46,11 +43,10 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; locked: boolean; 
 		],
 	},
 	{
-		// The permissions tool must stay open, or the model could lock itself out of every
-		// fix. This toolset is always on, and the tool cannot change it.
+		// The permission toolset holds the permissions tool. It is a normal toolset, so the
+		// model and the screen can turn it off.
 		name: "permission",
 		enabled: true,
-		locked: true,
 		patterns: ["^permissions$"],
 	},
 ];
@@ -63,7 +59,6 @@ function builtinToolsets(): Toolset[] {
 		patterns: [...entry.patterns],
 		enabled: entry.enabled,
 		builtin: true,
-		locked: entry.locked,
 	}));
 }
 
@@ -124,7 +119,7 @@ function readToolset(entry: unknown): Toolset | null {
 	}
 	if (patterns.length === 0) return null;
 
-	return { name, patterns, enabled: entry.enabled !== false, builtin: false, locked: false };
+	return { name, patterns, enabled: entry.enabled !== false, builtin: false };
 }
 
 /** Reads the stored toolsets in file order. A duplicate name keeps the first entry. */
@@ -148,14 +143,13 @@ export function mergeState(raw: unknown): PermissionsState {
 	const source: Record<string, unknown> = isRecord(raw) ? raw : {};
 	const stored = readStoredToolsets(source.toolsets);
 
-	// A shipped toolset keeps its own patterns. The file only sets the on/off state,
-	// and a locked toolset stays on whatever the file says.
+	// A shipped toolset keeps its own patterns. The file only sets the on/off state.
 	const toolsets = defaults.toolsets.map((toolset) => {
 		const key = toolset.name.toLowerCase();
 		const saved = stored.get(key);
 		if (saved === undefined) return toolset;
 		stored.delete(key);
-		return toolset.locked ? toolset : { ...toolset, enabled: saved.enabled };
+		return { ...toolset, enabled: saved.enabled };
 	});
 	for (const toolset of stored.values()) {
 		if (toolsets.length >= MAX_TOOLSETS) break;

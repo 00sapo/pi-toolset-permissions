@@ -27,12 +27,12 @@ test("defaults match the sketch", () => {
 	assert.deepEqual(state.extra_paths, []);
 	assert.deepEqual(state.sandboxes, { readonly_bash: false, no_network: false });
 	assert.deepEqual(
-		state.toolsets.map((toolset) => [toolset.name, toolset.enabled, toolset.builtin, toolset.locked]),
+		state.toolsets.map((toolset) => [toolset.name, toolset.enabled, toolset.builtin]),
 		[
-			["read", true, true, false],
-			["write", false, true, false],
-			["execute", true, true, false],
-			["permission", true, true, true],
+			["read", true, true],
+			["write", false, true],
+			["execute", true, true],
+			["permission", true, true],
 		],
 	);
 });
@@ -132,24 +132,22 @@ test("mergeState keeps a shipped toolset toggle", () => {
 	assert.equal(byName.get("write")?.enabled, true);
 });
 
-test("mergeState keeps the permission toolset on even when the file says off", () => {
+test("mergeState lets the file turn the permission toolset off", () => {
 	const state = mergeState({
 		toolsets: [{ name: "permission", patterns: ["^nothing$"], enabled: false, builtin: true }],
 	});
 	const permission = state.toolsets.find((toolset) => toolset.name === "permission");
 	assert.ok(permission);
-	assert.equal(permission.enabled, true);
-	assert.equal(permission.locked, true);
+	assert.equal(permission.enabled, false);
 	assert.deepEqual(permission.patterns, ["^permissions$"]);
 });
 
-test("mergeState defaults a custom toolset to enabled and unlocked", () => {
+test("mergeState defaults a custom toolset to enabled", () => {
 	const state = mergeState({ toolsets: [{ name: "custom", patterns: ["^custom$"] }] });
 	const custom = state.toolsets.find((toolset) => toolset.name === "custom");
 	assert.ok(custom);
 	assert.equal(custom.enabled, true);
 	assert.equal(custom.builtin, false);
-	assert.equal(custom.locked, false);
 });
 
 test("mergeState caps the toolset list", () => {
@@ -199,7 +197,6 @@ test("saveState and loadState round trip", () => {
 			patterns: ["^custom_"],
 			enabled: false,
 			builtin: false,
-			locked: false,
 		});
 
 		saveState(state, file);

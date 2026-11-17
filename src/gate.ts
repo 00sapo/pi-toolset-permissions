@@ -2,8 +2,6 @@ import type { BlockKind, GateDecision, PermissionsState } from "./types.ts";
 import { classify } from "./classify.ts";
 import { isAllowedPath, resolvePath, stripAt } from "./scope.ts";
 
-export const PERMISSIONS_TOOL_NAME = "permissions";
-
 const MAX_REASON = 240;
 
 /** Argument names that hold a path. */
@@ -51,15 +49,10 @@ export function evaluateCall(
 	input: Record<string, unknown>,
 	cwd: string,
 ): GateDecision {
-	// The permissions tool stays open even if the state says otherwise. Without it the
-	// model could not ask for a fix.
-	if (toolName === PERMISSIONS_TOOL_NAME) return { block: false };
-
+	// The permissions tool is a normal tool. When the permission toolset is off, the
+	// call is blocked like any other. The /permissions screen stays open.
 	const matched = classify(toolName, state.toolsets);
 	if (matched === null) return blocked("unknown", noToolsetReason(toolName));
-
-	const locked = new Set(state.toolsets.filter((toolset) => toolset.locked).map((toolset) => toolset.name));
-	if (matched.toolsets.some((name) => locked.has(name))) return { block: false };
 
 	for (const path of stringValues(input, PATH_KEYS)) {
 		if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));

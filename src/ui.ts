@@ -81,8 +81,7 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 			switch (item.kind) {
 				case "toolset": {
 					const name = clip(item.toolset.name, labelWidth).padEnd(labelWidth);
-					const note = item.toolset.locked ? theme.fg("dim", " locked") : "";
-					return `   ${marker} ${name}${onOff(item.toolset.enabled)}${note}`;
+					return `   ${marker} ${name}${onOff(item.toolset.enabled)}`;
 				}
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
@@ -120,10 +119,6 @@ export async function openPermissions(store: StateStore, ctx: ExtensionContext):
 		};
 
 		const toggleToolset = (toolset: Toolset): void => {
-			if (toolset.locked) {
-				notify("The permission toolset is locked. It protects the permissions tool.", "warning");
-				return;
-			}
 			update((current) => ({
 				...current,
 				toolsets: current.toolsets.map((entry) =>

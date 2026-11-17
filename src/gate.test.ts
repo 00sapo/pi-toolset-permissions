@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { PERMISSIONS_TOOL_NAME, evaluateCall } from "./gate.ts";
+import { evaluateCall } from "./gate.ts";
 import { defaultState } from "./state.ts";
 import type { GateDecision, PermissionsState } from "./types.ts";
 
@@ -52,26 +52,25 @@ function reasonOf(decision: GateDecision): string {
 	return decision.reason;
 }
 
-test("the permissions tool is always allowed", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			for (const toolset of current.toolsets) toolset.enabled = false;
-			current.sandboxes = { readonly_bash: true, no_network: true };
-		});
-		const decision = evaluateCall(state, PERMISSIONS_TOOL_NAME, { path: "/etc/passwd" }, space.project);
-		assert.equal(decision.block, false);
-	});
-});
-
-test("the permission toolset sets the permissions tool apart", () => {
+test("the permission toolset is a normal builtin toolset", () => {
 	withWorkspace((space) => {
 		const state = stateWith();
 		const toolset = state.toolsets.find((entry) => entry.name === "permission");
 		assert.ok(toolset);
-		assert.equal(toolset.locked, true);
+		assert.equal(toolset.builtin, true);
 		assert.equal(toolset.enabled, true);
 		assert.deepEqual(toolset.patterns, ["^permissions$"]);
 		assert.equal(evaluateCall(state, "permissions", {}, space.project).block, false);
+	});
+});
+
+test("the permissions tool is blocked when the permission toolset is off", () => {
+	withWorkspace((space) => {
+		const state = stateWith((current) => {
+			for (const toolset of current.toolsets) toolset.enabled = false;
+		});
+		const reason = reasonOf(evaluateCall(state, "permissions", {}, space.project));
+		assert.ok(reason.includes("no toolset"));
 	});
 });
 
@@ -253,7 +252,6 @@ test("a matched tool with another path key is checked", () => {
 				patterns: ["^mcp__fs__"],
 				enabled: true,
 				builtin: false,
-				locked: false,
 			}),
 		);
 		assert.equal(evaluateCall(state, "mcp__fs__read", { file_path: "/etc/passwd" }, space.project).block, true);
@@ -286,7 +284,6 @@ test("a custom toolset lets an MCP tool through", () => {
 				patterns: ["^mcp__foo_"],
 				enabled: true,
 				builtin: false,
-				locked: false,
 			}),
 		);
 		assert.equal(evaluateCall(state, "mcp__foo__bar", {}, space.project).block, false);

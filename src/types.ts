@@ -12,8 +12,6 @@ export interface Toolset {
 	enabled: boolean;
 	/** True for the toolsets that the extension ships. A builtin cannot be deleted. */
 	builtin: boolean;
-	/** A locked toolset is always on, so the model cannot turn it off. */
-	locked: boolean;
 }
 
 export interface SandboxFlags {
