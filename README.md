@@ -9,10 +9,10 @@ _Do you find managing sandboxes and permissions complicated?_
 This extension adopts a different modular, on-the-fly approach: you can toggle sets of tools and
 sandboxes using a simple menu during the session.
 
-You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The extension provides a tool to change the allowed operations.
+You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The extension provides a tool to modify the list of allowed toolsets.
 
-The AI can ask to change the permissions, but you can even disable that with _"Disable the
-permission tool"_
+The LLM can ask to change the permissions at any time, but you can disable that with _"Disable the
+permission tool"_ (or by manually disabling the toolset `permissions`).
 
 ## Install
 
