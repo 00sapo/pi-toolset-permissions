@@ -1,38 +1,30 @@
 # pi-toolset-permissions
 
-_Do you find managing sandboxes and permissions complicated?_
-
-This extension adopts a different modular, on-the-fly approach: you can toggle set of tools and
-sandboxes using a simple menu during the session.
-
-You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The exetension provides tool to change the allowed operations.
-
-The AI can ask to change the permissions, but you can even disable that with _"Disable the
-permission tool"_
+This extension adds a small settings screen to a pi session. You switch groups of tools and bash sandboxes on and off with a few keys. You can also tell the model what it must not do, for example "run in read-only mode now". The extension gives the model one tool that changes a setting, and that tool asks you to agree first.
 
 ## Main features
 
-- Three permission flags: read, write, and execute.
-- A path scope for the file tools.
-- Two sandboxes for shell commands: a read-only filesystem, and no network.
+- Four toolsets that ship with the extension: read, write, execute, and permission.
 - Custom toolsets that match tool names with regular expressions.
+- Two bash sandboxes: a read-only filesystem and no network.
+- One path scope for the file tools.
 - One `permissions` tool for the model. Each change asks you to agree.
-- A question for each tool that no toolset matches.
+- One question for each tool that no toolset matches.
 - One state file for all sessions.
 
 ## Concept
 
+A toolset is a group of tool names. You turn the whole group on or off together.
+
+A pattern is a regular expression. The extension tests each pattern against a tool name.
+
 A sandbox is an operating-system boundary for shell commands.
-
-A risk class is one of three groups: read, write, or execute. The extension puts each tool in one risk class.
-
-A toolset is a group of tool names that share one risk class. The extension ships three toolsets, one for each risk class. You can add a toolset with your own patterns.
-
-A flag allows or blocks each risk class. If the write flag is off, pi blocks every write tool.
 
 A path scope is the set of directories that file tools can touch. Project scope allows the project directory and the extra paths. Everywhere scope removes the path limit.
 
-Bash is the only tool in the execute class. The execute flag allows or blocks every bash call. The sandbox is a second layer that starts the whole call inside the boundary. The sandbox does not read the command text.
+The permission toolset holds the `permissions` tool. That toolset is locked and always on. Without the tool, the model cannot ask you for a fix.
+
+Bash is one tool. Its patterns sit in the execute toolset. The sandbox is a second layer. It starts the whole call inside the boundary, and it does not read the command text.
 
 The model changes the state with the `permissions` tool. The tool asks you to agree before each change. Without a dialog, the tool cannot change the state.
 
@@ -62,31 +54,38 @@ Open the settings screen:
 /permissions
 ```
 
-The screen shows the flags, the scope, and three pages:
+The screen holds one list with four sections: the toolsets, the sandboxes, the scope, and the paths.
 
 ```text
  Permissions
 
-   Read            [ON]
-   Write           [OFF]
-   Execute         [ON]
-   Scope           [PROJECT]
-   Paths (1)          >
-   Toolsets (3)       >
-   Sandboxes (0)      >
+ Toolsets
+   > read                    [ON]
+     write                   [OFF]
+     execute                 [ON]
+     permission              [ON] locked
 
- space/enter toggle · s scope · p paths · t toolsets · b sandboxes · esc close
+ Sandboxes
+     Read-only filesystem    [OFF]
+     No network              [OFF]
+
+ Scope
+   > All paths               [PROJECT]
+
+ Paths
+     /home/user/project  project root
+
+ space/enter toggle · s scope · a add path · d remove path · esc close
 ```
 
 | Key | Action |
 | --- | --- |
 | up, down | move the selection |
-| space, enter | change the selected row, or open its page |
+| space, enter | turn the selected toolset or sandbox on or off, or switch the scope |
 | s | switch the scope between project and everywhere |
-| p | open the paths page |
-| t | open the toolsets page |
-| b | open the sandboxes page |
-| esc | go back to the main page, or close the screen |
+| a | add a directory to the paths |
+| d | remove the selected extra path |
+| esc | close the screen |
 
 Each change is saved at once. The esc key never loses work.
 
@@ -94,75 +93,44 @@ The default state:
 
 | Setting | Default |
 | --- | --- |
-| Read tools | on |
-| Write tools | off |
-| Execute tools | on |
+| Read toolset | on |
+| Write toolset | off |
+| Execute toolset | on |
+| Permission toolset | on, locked |
 | Path scope | project |
 | Extra paths | none |
 | Read-only filesystem sandbox | off |
 | No-network sandbox | off |
 
-The write flag is off at the start. Turn it on before the model can change files with the write and edit tools.
+The write toolset is off at the start. Turn it on before the model can change files with the write and edit tools.
 
-## The paths page
+## The toolsets
 
-The page lists the project root and the extra paths.
+The extension ships four toolsets. Read tools, write tools, and execute tools hold the usual tool names of pi. The permission toolset holds only the `permissions` tool.
+
+Press space to turn a toolset on or off. A toolset that is off matches no tool.
+
+The permission toolset is locked. It stays on, and the screen and the model cannot turn it off. The model can still ask you to change every other toolset.
+
+Ask the assistant to add a toolset. Give the name and the patterns. The dialog shows both before you agree.
+
+Press `d` on a toolset row to delete a custom toolset. A shipped toolset cannot be deleted. The extension writes the shipped patterns back the next time it reads the state file.
+
+When a toolset is off, its patterns match nothing. If no other toolset matches a tool, pi asks you about that tool.
+
+## The paths
+
+The path list starts with the project root. It then holds the extra paths.
 
 Press `a` to add a directory. Type a path. The extension makes sure that the path is an existing directory. Press `d` to remove the selected extra path.
 
 The project root cannot be removed. The extension saves the resolved path, so a symlink cannot add a larger tree than the dialog shows.
 
-## The toolsets page
+## The sandboxes
 
-The page lists the three builtin toolsets and the custom toolsets. The builtin toolsets are read-only.
-
-Press space to turn a custom toolset on or off. Press `d` to delete a custom toolset.
-
-Ask the assistant to add a toolset. Give the name, the risk class, and the patterns.
-
-When a custom toolset is off, its patterns match nothing. If no other toolset matches the tool, pi asks you about the tool.
-
-## The sandboxes page
-
-The page lists two sandboxes.
+The screen lists two sandboxes.
 
 Press space to turn the selected sandbox on or off. The change applies to the next bash call.
-
-## The permissions tool
-
-The model uses one tool with nine actions.
-
-| Action | Parameters | Effect |
-| --- | --- | --- |
-| status | none | show the flags, the scope, the paths, the toolsets, and the sandboxes |
-| set_flag | flag, enabled | turn the read, write, or execute flag on or off |
-| set_scope | scope | set the scope to project or everywhere |
-| add_path | path | allow one more directory in project scope |
-| remove_path | path | remove one extra directory |
-| add_toolset | name, risk, patterns | add a custom toolset |
-| remove_toolset | name | delete a custom toolset |
-| set_toolset | name, enabled | turn a custom toolset on or off |
-| set_sandbox | sandbox, enabled | turn a sandbox on or off |
-
-The `status` action only reads. The other eight actions ask you to agree before they change the state.
-
-You can tell the assistant what you want in your own words. Examples:
-
-- "Allow write tools." The model calls `set_flag`.
-- "Enlarge the scope to ../shared." The model calls `add_path`.
-- "Turn on the no-network sandbox." The model calls `set_sandbox`.
-
-## Unknown tools
-
-A tool that no toolset matches is blocked. Pi then asks you one question with three answers:
-
-- Allow once: the call starts, and the state does not change.
-- Always allow: the extension adds a toolset for the exact tool name, then the call starts.
-- Block: the call does not start.
-
-A tool with `readOnlyHint` joins the read class. Every other tool joins the execute class. Without a dialog, the call is blocked.
-
-## Sandboxes
 
 A sandbox starts the bash call inside an operating-system boundary. It does not read the command text.
 
@@ -180,9 +148,44 @@ You can turn on both sandboxes at once.
 
 If a program that a sandbox needs is missing, the bash call fails with a message. The call never starts without the sandbox.
 
-A sandbox does not change the flags, and a flag does not change a sandbox. Turn on the read-only sandbox when bash must not change files.
+A sandbox does not change a toolset, and a toolset does not change a sandbox. Turn on the read-only sandbox when bash must not change files.
 
 Commands that you type with `!` are not sandboxed. A sandbox covers only the shell tools that the model calls.
+
+## The permissions tool
+
+The model uses one tool with eight actions.
+
+| Action | Parameters | Effect |
+| --- | --- | --- |
+| status | none | show the toolsets, the sandboxes, the scope, and the paths |
+| set_scope | scope | set the scope to project or everywhere |
+| add_path | path | allow one more directory in project scope |
+| remove_path | path | remove one extra directory |
+| add_toolset | name, patterns | add a custom toolset |
+| remove_toolset | name | delete a custom toolset |
+| set_toolset | name, enabled | turn a toolset on or off |
+| set_sandbox | sandbox, enabled | turn a sandbox on or off |
+
+The `status` action only reads. The other seven actions ask you to agree before they change the state.
+
+The model cannot turn off the permission toolset. The tool reports that case and changes nothing.
+
+You can tell the assistant what you want in your own words. Examples:
+
+- "Allow the write toolset." The model calls `set_toolset`.
+- "Enlarge the scope to ../shared." The model calls `add_path`.
+- "Turn on the no-network sandbox." The model calls `set_sandbox`.
+
+## Unknown tools
+
+A tool that no toolset matches is blocked. Pi then asks you one question with three answers:
+
+- Allow once: the call starts, and the state does not change.
+- Always allow: the extension adds a toolset for the exact tool name, then the call starts.
+- Block: the call does not start.
+
+Without a dialog, the call is blocked.
 
 ## State file
 
@@ -194,6 +197,8 @@ The state lives in one file: `~/.pi/agent/permissions.json`.
 The extension writes a temporary file and renames it. A crash cannot leave half a file.
 
 A missing file gives the default state. A corrupt file gives the default state too.
+
+A file from version 1 still loads. The extension drops the old flags, keeps the custom toolsets, and writes the shipped patterns back.
 
 ## Limits
 
