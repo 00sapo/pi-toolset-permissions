@@ -2,13 +2,27 @@
 
 _Do you find managing sandboxes and permissions complicated?_
 
-This extension adopts a different modular, on-the-fly approach: you can toggle set of tools and
+This extension adopts a different modular, on-the-fly approach: you can toggle sets of tools and
 sandboxes using a simple menu during the session.
 
-You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The exetension provides tool to change the allowed operations.
+You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The extension provides a tool to change the allowed operations.
 
 The AI can ask to change the permissions, but you can even disable that with _"Disable the
 permission tool"_
+
+## Install
+
+```text
+pi install npm:pi-toolset-permissions
+```
+
+Try it for one session without saving it:
+
+```text
+pi -e npm:pi-toolset-permissions
+```
+
+Then open the screen with `/permissions`.
 
 ## Main features
 
@@ -261,3 +275,7 @@ A sandbox limits the process tree that a shell tool starts. It does not limit pi
 The operating system is the real boundary. User accounts, containers, and network policy hold a process back even when the extension is wrong.
 
 No tool guarantees compliance with ASD-STE100. The official dictionary is free at asd-ste100.org.
+
+## License
+
+GPL-3.0-only. Copyright (C) 2026 00sapo. The full text is in [LICENSE](LICENSE).
