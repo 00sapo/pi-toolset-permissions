@@ -168,17 +168,6 @@ test("a read-only bash command is allowed", () => {
 	});
 });
 
-test("the read-only sandbox blocks a write redirect", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.sandboxes.readonly_bash = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "echo hi > f" }, space.project));
-		assert.ok(reason.includes("read-only sandbox is on"));
-		assert.ok(reason.includes("redirects output"));
-	});
-});
-
 test("a write redirect is allowed when write is on and the sandbox is off", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
@@ -188,55 +177,12 @@ test("a write redirect is allowed when write is on and the sandbox is off", () =
 	});
 });
 
-test("a write redirect is blocked by the read-only bash sandbox", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-			current.sandboxes.readonly_bash = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "echo hi > f" }, space.project));
-		assert.ok(reason.includes("read-only sandbox is on"));
-	});
-});
-
-test("a write command is blocked by the read-only sandbox", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.sandboxes.readonly_bash = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "rm -rf build" }, space.project));
-		assert.ok(reason.includes("rm can delete files"));
-	});
-});
-
 test("curl is allowed when the no-network sandbox is off", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
 			current.flags.write = true;
 		});
 		assert.equal(evaluateCall(state, "bash", { command: "curl https://example.com" }, space.project).block, false);
-	});
-});
-
-test("curl is blocked when the no-network sandbox is on", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-			current.sandboxes.no_network = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "curl https://example.com" }, space.project));
-		assert.ok(reason.includes("no-network"));
-		assert.ok(reason.includes("curl"));
-	});
-});
-
-test("a shell separator cannot hide a write command from the sandbox", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.sandboxes.readonly_bash = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "ls && rm -f f" }, space.project));
-		assert.ok(reason.includes("rm can delete files"));
 	});
 });
 
@@ -374,57 +320,6 @@ test("the read flag off blocks the read tools but not write", () => {
 	});
 });
 
-test("the read-only bash sandbox blocks touch even with the write flag on", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-			current.sandboxes.readonly_bash = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "touch x" }, space.project));
-		assert.ok(reason.includes("read-only sandbox is on"));
-		assert.ok(reason.includes("touch"));
-		assert.equal(evaluateCall(state, "bash", { command: "ls" }, space.project).block, false);
-	});
-});
-
-test("the no-network sandbox blocks git fetch but not git status", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.flags.write = true;
-			current.sandboxes.no_network = true;
-		});
-		const reason = reasonOf(evaluateCall(state, "bash", { command: "git fetch" }, space.project));
-		assert.ok(reason.includes("no-network"));
-		assert.ok(reason.includes("git fetch"));
-		assert.equal(evaluateCall(state, "bash", { command: "git status" }, space.project).block, false);
-	});
-});
-
-test("an execute tool with another command key is still checked by a sandbox", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.scope = "everywhere";
-			current.sandboxes.readonly_bash = true;
-		});
-		assert.equal(evaluateCall(state, "mcp__fs__bash", { cmd: "rm -rf /" }, space.project).block, true);
-		assert.equal(evaluateCall(state, "mcp__fs__bash", { cmd: "ls -la" }, space.project).block, false);
-	});
-});
-
-test("an execute tool without a command key fails closed when a sandbox is on", () => {
-	withWorkspace((space) => {
-		const state = stateWith((current) => {
-			current.sandboxes.readonly_bash = true;
-		});
-		assert.equal(evaluateCall(state, "mcp__fs__bash", { payload: "x" }, space.project).block, true);
-		const unsandboxed = stateWith((current) => {
-			current.flags.write = true;
-		});
-		assert.equal(evaluateCall(unsandboxed, "mcp__fs__bash", { payload: "x" }, space.project).block, false);
-		assert.equal(evaluateCall(unsandboxed, "mcp__fs__bash", { cmd: "rm -rf /" }, space.project).block, false);
-	});
-});
-
 test("a read tool with another path key is checked", () => {
 	withWorkspace((space) => {
 		const state = stateWith(() => {});
@@ -436,14 +331,12 @@ test("a read tool with another path key is checked", () => {
 	});
 });
 
-test("the no-network sandbox blocks xargs and find -exec", () => {
+test("the gate does not inspect bash commands when a sandbox is on", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
-			current.flags.write = true;
-			current.sandboxes.no_network = true;
+			current.sandboxes = { readonly_bash: true, no_network: true };
 		});
-		assert.equal(evaluateCall(state, "bash", { command: "ls | xargs curl http://x" }, space.project).block, true);
-		assert.equal(evaluateCall(state, "bash", { command: "find . -exec ssh h ;" }, space.project).block, true);
-		assert.equal(evaluateCall(state, "bash", { command: "git status" }, space.project).block, false);
+		assert.equal(evaluateCall(state, "bash", { command: "ls | xargs curl http://x" }, space.project).block, false);
+		assert.equal(evaluateCall(state, "bash", { command: "rm -rf /" }, space.project).block, false);
 	});
 });

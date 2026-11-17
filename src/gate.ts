@@ -1,6 +1,5 @@
 import type { BlockKind, GateDecision, PermissionsState, Risk } from "./types.ts";
 import { classify } from "./classify.ts";
-import { networkCommandReason, writeCommandReason } from "./sandboxes.ts";
 import { isAllowedPath, resolvePath, stripAt } from "./scope.ts";
 
 export const PERMISSIONS_TOOL_NAME = "permissions";
@@ -9,9 +8,6 @@ const MAX_REASON = 240;
 
 /** Argument names that hold a path. */
 const PATH_KEYS = ["path", "file_path", "filePath", "file", "paths", "files"];
-
-/** Argument names that hold a command line. */
-const COMMAND_KEYS = ["command", "cmd", "script", "code"];
 
 function blocked(kind: BlockKind, reason: string): GateDecision {
 	if (reason.length <= MAX_REASON) return { block: true, kind, reason };
@@ -52,14 +48,6 @@ function pathReason(state: PermissionsState, cwd: string, value: string): string
 	return `Blocked: "${stripAt(value)}" resolves to ${resolvePath(cwd, value)}, outside the allowed roots: ${roots}. Ask the user to add the path or change the scope with the permissions tool.`;
 }
 
-function sandboxReason(sandbox: string, detail: string): string {
-	return `Blocked: the ${sandbox} sandbox is on and ${detail}. Ask the user to change it with the permissions tool (action "set_sandbox").`;
-}
-
-function noCommandReason(toolName: string): string {
-	return `Blocked: the execute tool "${toolName}" has no recognized command argument, so a bash sandbox cannot check it. Ask the user to change the sandboxes with the permissions tool.`;
-}
-
 /** Decides whether a tool call may run. Pure: no I/O, no state changes. */
 export function evaluateCall(
 	state: PermissionsState,
@@ -81,21 +69,6 @@ export function evaluateCall(
 		}
 	}
 
-	// Bash is one execute tool. The optional sandboxes are the finer layer.
-	if (risk === "execute" && (state.sandboxes.readonly_bash || state.sandboxes.no_network)) {
-		const commands = stringValues(input, COMMAND_KEYS);
-		if (commands.length === 0) return blocked("sandbox", noCommandReason(toolName));
-		for (const command of commands) {
-			if (state.sandboxes.readonly_bash) {
-				const detail = writeCommandReason(command);
-				if (detail !== null) return blocked("sandbox", sandboxReason("read-only", detail));
-			}
-			if (state.sandboxes.no_network) {
-				const detail = networkCommandReason(command);
-				if (detail !== null) return blocked("sandbox", sandboxReason("no-network", detail));
-			}
-		}
-	}
-
+	// Bash is one execute tool. The sandboxes run it inside the OS boundary.
 	return { block: false };
 }

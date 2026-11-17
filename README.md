@@ -5,7 +5,7 @@ An extension for pi that checks each tool call before it runs.
 The extension sorts tools into three risk classes: read, write, and execute.
 Each class has a flag. A flag set to off blocks every tool in that class.
 A path scope limits the directories that tools can reach.
-Two optional sandboxes check bash commands for file changes and network access.
+Two optional sandboxes run bash inside an operating-system boundary: a read-only filesystem view, and a separate network namespace.
 
 ## Install
 
@@ -24,6 +24,8 @@ pi -e /path/to/pi-toolset-permissions/src/index.ts
 After you edit the code of an installed copy, run `/reload` in pi.
 A run started with `pi -e` reads the file when pi starts, so restart pi instead.
 Run `/permissions` to open the settings screen.
+
+The read-only sandbox needs bubblewrap (`bwrap`). The no-network sandbox also accepts `unshare` from util-linux.
 
 ## Default state
 
@@ -99,11 +101,10 @@ The extension refuses a change when the session has no dialog interface, for exa
 1. No toolset matches the tool name: the call is blocked, and the user is asked to allow it once, always, or never. "Always" adds a toolset that matches the exact tool name. The risk class is read for a tool that declares `readOnlyHint`, and execute for every other tool.
 2. The risk flag of the match is off: the call is blocked and the reason names the flag.
 3. A read or write call names a path outside the allowed roots: the call is blocked.
-4. An execute call matches a bash command that an enabled sandbox rejects: the call is blocked.
 
 Bash is one tool. The execute flag allows or blocks it as a whole.
-The sandboxes are a second layer that looks inside the command line.
-The gate reads the `path`, `file_path`, `file`, `paths`, and `files` arguments for file tools, and the `command`, `cmd`, `script`, and `code` arguments for the sandboxes.
+The sandboxes do not read the command. They run the whole bash call inside an operating-system boundary.
+The gate reads the `path`, `file_path`, `file`, `paths`, and `files` arguments of file tools.
 A read or write tool with no path argument passes the path scope check.
 
 A session without a dialog interface blocks an unknown tool. The reason names the tool.
@@ -112,16 +113,19 @@ The `permissions` tool always passes the gate. It asks the user itself.
 
 ## Sandboxes
 
-The bash read-only sandbox blocks commands that can change the filesystem.
-The list includes `rm`, `mv`, `cp`, `tee`, output redirection, in-place edits with `sed -i` or `perl -pi`, `find -delete`, `find -exec`, `xargs`, `git commit`, `git push`, `git config`, package installers, and `sudo`.
-The check also reads the payload of `sh -c`, `bash -lc`, and `eval`, and treats a script run by an interpreter such as `python3 build.py` or `node -e` as a possible write.
-A version query such as `node --version` is not blocked. An operator inside quotes, such as `grep 'a>b' file`, is not a redirect. A redirect to `/dev/null` is not blocked.
+The read-only filesystem sandbox runs every bash command with the root directory bound read-only.
+The kernel rejects any write, including writes to `/tmp`, so no command text is checked.
+The sandbox needs `bwrap` from bubblewrap.
 
-The bash no-network sandbox blocks commands that can reach the network.
-The list includes `curl`, `wget`, `ssh`, `scp`, `git clone`, `git pull`, `docker pull`, `docker compose`, and `gh api`.
+The no-network sandbox runs every bash command in a separate network namespace.
+Every network operation fails, including name resolution.
+It needs `bwrap` from bubblewrap, or `unshare` from util-linux as a fallback for the network isolation alone.
 
-A sandbox works on its own. The write flag does not change the bash read-only sandbox, and the read-only sandbox does not change the write flag.
-Turn on the read-only sandbox when bash must not change files while the execute flag stays on.
+Both sandboxes can be on at once.
+When the program that a sandbox needs is missing, the bash call fails with a clear message. It never runs unsandboxed.
+A sandbox works on its own: the write flag does not change it, and it does not change the write flag.
+
+Commands that you type yourself with `!` are not sandboxed. The sandboxes apply to the `bash` tool that the model calls.
 
 ## State file
 
@@ -133,14 +137,13 @@ A missing file gives the default state. A corrupt file gives the default state t
 
 ## Limitations
 
-The bash checks are heuristics. They read the command text, not the behavior of the program.
-A wrapper script hides its content. A renamed network client escapes the list. A path built at run time escapes the scan.
-A command line that hides a command, such as `CMD=rm; $CMD -rf /`, also escapes the scan.
-A command longer than 8000 characters, or a command nested more than three shells deep, is blocked instead of checked.
+The sandboxes use Linux namespaces. The read-only sandbox needs bubblewrap.
+On macOS, bubblewrap is not available through the usual package managers, so the sandboxes fail with a message. Use a container for that case.
 
-The operating system is the real boundary.
-User accounts, file permissions, containers, and network policy hold a process back.
-Use them for work that must stay contained.
+A sandbox limits the process tree that the `bash` tool starts. It does not limit pi itself, other tools, or commands that you type with `!`.
+The operating system is the real boundary. User accounts, containers, and network policy hold a process back even when the extension is wrong.
+
+A command that changes files through a server or a device outside the filesystem can still have an effect. The read-only sandbox covers the filesystem, not every device.
 
 The path scope covers the usual path arguments of read tools and write tools.
 A tool that takes a path in another argument is not checked by the path scope.

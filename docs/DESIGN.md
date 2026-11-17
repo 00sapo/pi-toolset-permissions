@@ -8,14 +8,16 @@ by asking the model, which uses a `permissions` tool that requires user confirma
 
 After the first version, two rules changed. Bash is one execute tool: the execute flag
 allows or blocks every bash call, and the path scope applies only to file tools. The
-sandboxes are the second layer that looks inside the command line, and they work on their
-own, independent of the write flag. A tool that matches no toolset is still blocked by the
-gate, but pi now asks the user to allow it once, allow it always, or block it. "Always"
-adds a toolset for the exact tool name.
+sandboxes are the second layer, and they run the whole bash call inside an
+operating-system boundary: a read-only bind of the root, or a separate network namespace.
+They do not read the command text, and they work on their own, independent of the write
+flag. A tool that matches no toolset is still blocked by the gate, but pi now asks the
+user to allow it once, allow it always, or block it. "Always" adds a toolset for the
+exact tool name.
 
 The rest of this document describes the first version and stays as the design record.
-Where it mentions a bash path scan, a write check tied to the write flag, or a plain
-denial for unknown tools, the revision above replaces it.
+Where it mentions a bash path scan, command pattern lists, a write check tied to the
+write flag, or a plain denial for unknown tools, the revision above replaces it.
 
 Contracts are in `src/types.ts` (already written). Entry point is `src/index.ts`.
 No runtime dependencies. Imports allowed: `typebox` (only), `node:*`, and `import type`

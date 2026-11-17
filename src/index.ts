@@ -1,7 +1,9 @@
 /** Wiring: state, the tool_call gate, the /permissions command, and the footer status. */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createBashTool } from "@earendil-works/pi-coding-agent";
 import { evaluateCall } from "./gate.ts";
+import { wrapBash } from "./sandboxes.ts";
 import { MAX_TOOLSETS, StateStore } from "./state.ts";
 import { registerPermissionsTool, statusLine } from "./tool.ts";
 import type { Risk, Toolset } from "./types.ts";
@@ -106,6 +108,31 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		});
 
 		registerPermissionsTool(pi, store, publish);
+
+		// Bash is one tool. When a sandbox is on, run the command inside the OS boundary.
+		const bashDefinition = createBashTool(process.cwd());
+		pi.registerTool({
+			...bashDefinition,
+			promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+			promptGuidelines: [
+				"You can inspect PI_* environment variables for current model and session details.",
+			],
+			async execute(toolCallId, params, signal, onUpdate, ctx) {
+				const plan = wrapBash(params.command, store.get());
+				if (plan !== null && "error" in plan) {
+					return {
+						content: [{ type: "text", text: plan.error }],
+						details: {},
+						isError: true,
+					};
+				}
+				const tool = createBashTool(
+					ctx.cwd,
+					plan === null ? {} : { spawnHook: (input) => ({ ...input, command: plan.command }) },
+				);
+				return tool.execute(toolCallId, params, signal, onUpdate);
+			},
+		});
 
 		pi.registerCommand("permissions", {
 			description: "Tool permissions, scope, and sandboxes",
