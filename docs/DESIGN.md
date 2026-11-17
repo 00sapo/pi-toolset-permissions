@@ -18,7 +18,7 @@ The permission toolset holds the `permissions` tool. It is a normal toolset, so 
 4. Question. When no toolset matches, the wiring asks the user to allow the call once, allow it always, or block it.
 5. Sandbox. The bash tool wrapper starts the command inside the operating-system boundary.
 6. Tool. The `permissions` tool reads the state and changes it after the user agrees.
-7. Screen. The `/permissions` command opens a small screen for the same state.
+7. Screen. The `/permissions` command opens a small screen for the same state. The screen has two views. The list view holds the toolsets, the sandboxes, the scope, and the paths. The pattern view shows one toolset: each pattern with the tool names that it matches, and the keys to edit, add, and delete a pattern.
 
 ## Call flow
 
@@ -30,10 +30,17 @@ The permission toolset holds the `permissions` tool. It is a normal toolset, so 
 6. The bash wrapper adds the sandbox command. A missing backend blocks the call.
 7. The tool starts.
 
+## The pattern screen
+
+The list view opens the pattern view for one toolset. The pattern view reads the tool names with `pi.getAllTools()`, compiles each pattern with the same flag as the gate, and shows the names that match.
+
+Every edit returns a new list or an error. `appendPattern` refuses a duplicate and a full list, `replacePattern` refuses a duplicate of another entry, and `removePattern` refuses the last entry. A save runs only on a list that `checkPatterns` accepts, so the state file always loads again.
+
 ## Decisions
 
 - Deny a tool that no toolset matches, but ask the user first. A silent allow is not safe, and a silent deny stops work.
-- Treat the permissions tool as a normal tool. The permission toolset turns it on and off, like the other three sets. The `/permissions` command runs outside the gate, so the user can always turn the toolset back on.
+- Treat the permission toolset as a normal toolset. It turns the `permissions` tool on and off, like the other three sets. The `/permissions` command runs outside the gate, so the user can always turn the toolset back on.
+- Keep the default patterns in the code and let the state file replace them. A user can tune a shipped toolset without a fork. The state file records the full list, so a pattern edit is saved like a custom toolset.
 - Keep the permission toolset in the state file. The screen shows it next to the other toolsets, so the user sees the whole picture.
 - Treat bash as one tool. The execute toolset sets the outer limit, and the sandbox sets the inner limit. Command text analysis is fragile, so the extension does not use it.
 - Put the sandbox in the kernel. Linux uses bubblewrap or unshare, macOS uses Seatbelt, and native Windows fails closed.
@@ -55,7 +62,8 @@ The permission toolset holds the `permissions` tool. It is a normal toolset, so 
 | `src/sandboxes.ts` | Sandbox descriptors, backend detection, command wrappers |
 | `src/gate.ts` | Pure call decision |
 | `src/tool.ts` | The `permissions` tool |
-| `src/ui.ts` | The `/permissions` screen |
+| `src/patterns.ts` | Pure edits of a pattern list, and the tool names that a pattern matches |
+| `src/ui.ts` | The `/permissions` screen and the pattern editor |
 
 ## State
 
@@ -63,7 +71,7 @@ The defaults are the read toolset on, the write toolset off, the execute toolset
 
 `mergeState` accepts unknown JSON and repairs it. It fills missing fields, drops invalid toolsets, restores the four shipped toolsets, and caps the list sizes.
 
-A stored shipped toolset keeps its pattern set from the code. The file sets only its on/off state. A version 1 file loses its flags and keeps its custom toolsets.
+A stored shipped toolset keeps its name and its builtin mark. The file sets the on/off state and the pattern list, so a user can change the default patterns. `checkPatterns` checks a list in one place, and both the state file and the pattern editor use it. A pattern list that does not load again is never saved. A version 1 file loses its flags and keeps its custom toolsets.
 
 `StateStore.update` reads the file again before it applies a change. Two pi processes can then keep both changes.
 
