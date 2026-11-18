@@ -81,15 +81,15 @@ export function canUseSandbox(target: SandboxTarget, platform: NodeJS.Platform =
 	return sandboxAvailability(target, platform).available;
 }
 
-/** One line for the Sandboxes section of the screen. It names the depth and the platform. */
+/** One line for the Sandboxes section of the screen. It names the tool coverage. */
 const MENU_NOTE: Record<SandboxTarget, string> = {
-	"all-tools": "Every tool runs inside the sandbox. Linux only: macOS and Windows need a Linux host or WSL2.",
-	bash: "Only bash runs inside the sandbox. Linux and macOS; Windows needs WSL2.",
+	"all-tools": "Applies to all tools except exceptions.",
+	bash: "Applies to only bash.",
 };
 
 /**
- * The lines under the Sandboxes heading. An available layer shows what it covers and where
- * it runs, plus any caveat. An unavailable layer shows why, and what to do instead.
+ * The lines under the Sandboxes heading. They sit above the layer rows. An available layer
+ * shows what it covers, plus any caveat. An unavailable layer shows why, and what to do instead.
  */
 export function sandboxMenuNote(target: SandboxTarget, platform: NodeJS.Platform = process.platform): string[] {
 	const where = sandboxAvailability(target, platform);

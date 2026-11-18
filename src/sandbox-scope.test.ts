@@ -73,26 +73,23 @@ test("the summary is one line and fits a menu row", () => {
 	}
 });
 
-test("the menu note names the depth and the platform for every supported target", () => {
-	const all = sandboxMenuNote("all-tools", "linux");
-	assert.match(all[0], /Every tool/);
-	assert.match(all[0], /Linux only/);
-	const bash = sandboxMenuNote("bash", "linux");
-	assert.match(bash[0], /Only bash/);
-	assert.match(bash[0], /macOS/);
+test("the menu note names the tool coverage, and it comes before the layer rows", () => {
+	assert.equal(sandboxMenuNote("all-tools", "linux")[0], "Applies to all tools except exceptions.");
+	assert.equal(sandboxMenuNote("bash", "linux")[0], "Applies to only bash.");
+	assert.equal(sandboxMenuNote("bash", "darwin")[0], "Applies to only bash.");
 });
 
 test("an unavailable layer shows the reason instead of the coverage line", () => {
 	const lines = sandboxMenuNote("all-tools", "win32");
 	assert.equal(lines.length, 1);
 	assert.match(lines[0], /WSL2/);
-	assert.doesNotMatch(lines[0], /Every tool runs inside the sandbox/);
+	assert.doesNotMatch(lines[0], /Applies to all tools/);
 	assert.equal(sandboxRowMark("all-tools", "win32"), " [unavailable here]");
 	assert.equal(sandboxRowMark("all-tools", "linux"), "");
 });
 
 test("macOS shows the coverage line and its sandbox-exec caveat", () => {
 	const lines = sandboxMenuNote("bash", "darwin");
-	assert.match(lines[0], /Only bash/);
+	assert.equal(lines[0], "Applies to only bash.");
 	assert.match(lines[1] ?? "", /sandbox-exec/);
 });
