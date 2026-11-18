@@ -1,6 +1,7 @@
 /** The `/permissions` screen: toolsets, their patterns, the sandboxes, the scope, and the paths. */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { SANDBOXES } from "./sandboxes.ts";
 import type { SandboxInfo } from "./sandboxes.ts";
 import { canonicalPath, resolveDirectory } from "./scope.ts";
@@ -8,6 +9,7 @@ import { appendPattern, matchingNames, removePattern, replacePattern } from "./p
 import { MAX_EXTRA_PATHS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns } from "./state.ts";
 import { statusText } from "./tool.ts";
 import type { PermissionsState, Toolset } from "./types.ts";
+import { nextToolsetMode, toolsetMode } from "./types.ts";
 
 type Row =
 	| { kind: "toolset"; toolset: Toolset }
@@ -79,6 +81,9 @@ export async function openPermissions(
 
 		const onOff = (value: boolean): string => (value ? theme.fg("success", "[ON]") : theme.fg("muted", "[OFF]"));
 
+		const modeLabel = (toolset: Toolset): string => toolset.enabled === "ask"
+			? theme.fg("warning", "[ASK]") : onOff(toolset.enabled);
+
 		const toolsetByName = (name: string): Toolset | undefined =>
 			store.get().toolsets.find((entry) => entry.name === name);
 
@@ -99,7 +104,7 @@ export async function openPermissions(
 				case "toolset": {
 					const name = clip(item.toolset.name, labelWidth).padEnd(labelWidth);
 					const note = theme.fg("dim", ` ${item.toolset.patterns.length} pattern${item.toolset.patterns.length === 1 ? "" : "s"}`);
-					return `   ${marker} ${name}${onOff(item.toolset.enabled)}${note}`;
+					return `   ${marker} ${name}${modeLabel(item.toolset)}${note}`;
 				}
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
@@ -130,7 +135,10 @@ export async function openPermissions(
 			});
 			lines.push(
 				"",
-				theme.fg("dim", " space toggle · enter patterns · s scope · a add path · d remove path · esc close"),
+				theme.fg("dim", " Toolsets: OFF blocked · ON no request · ASK approve each call"),
+				theme.fg("dim", " If several toolsets match, ON takes priority over ASK and OFF."),
+				theme.fg("dim", " j/k move · l enter · h back · space off → on → ask"),
+				theme.fg("dim", " s scope · a add path · d remove path"),
 			);
 			return lines;
 		};
@@ -150,10 +158,10 @@ export async function openPermissions(
 			const kind = toolset.builtin ? "builtin" : "custom";
 
 			const lines = [
-				` ${theme.bold("Permissions")} ${theme.fg("dim", "›")} ${theme.bold(clip(toolset.name, Math.max(8, width - 24)))}  ${onOff(toolset.enabled)}`,
+				` ${theme.bold("Permissions")} ${theme.fg("dim", "›")} ${theme.bold(clip(toolset.name, Math.max(8, width - 24)))}  ${modeLabel(toolset)}`,
 				theme.fg(
 					"dim",
-					` ${kind} · ${toolset.patterns.length} of ${MAX_TOOLSET_PATTERNS} patterns · ${toolset.enabled ? "on, so these tools may run" : "off, so these tools are blocked"}`,
+					` ${kind} · ${toolset.patterns.length} of ${MAX_TOOLSET_PATTERNS} patterns · ${toolsetMode(toolset.enabled)}: ${toolset.enabled === "ask" ? "approve each call after its action and reason" : toolset.enabled ? "no permission request" : "blocked unless another toolset allows them"}`,
 				),
 				"",
 			];
@@ -166,7 +174,7 @@ export async function openPermissions(
 				lines.push(`   ${marker} ${shown}  ${matches}`);
 			});
 
-			lines.push("", theme.fg("dim", " enter edit · a add · d delete · space toggle · esc back"));
+			lines.push("", theme.fg("dim", " j/k move · l/enter edit · h/esc back · a add · d delete · space off → on → ask"));
 			return lines;
 		};
 
@@ -181,7 +189,7 @@ export async function openPermissions(
 			update((current) => ({
 				...current,
 				toolsets: current.toolsets.map((entry) =>
-					entry.name === toolset.name ? { ...entry, enabled: !entry.enabled } : entry,
+					entry.name === toolset.name ? { ...entry, enabled: nextToolsetMode(entry.enabled) } : entry,
 				),
 			}));
 		};
@@ -337,16 +345,16 @@ export async function openPermissions(
 				refresh();
 				return;
 			}
-			if (keybindings.matches(data, "tui.select.cancel")) {
+			if (data === "h" || keybindings.matches(data, "tui.select.cancel")) {
 				view = { kind: "main" };
 				refresh();
 				return;
 			}
-			if (keybindings.matches(data, "tui.select.up")) {
+			if (data === "k" || keybindings.matches(data, "tui.select.up")) {
 				movePattern(-1);
 				return;
 			}
-			if (keybindings.matches(data, "tui.select.down")) {
+			if (data === "j" || keybindings.matches(data, "tui.select.down")) {
 				movePattern(1);
 				return;
 			}
@@ -364,20 +372,20 @@ export async function openPermissions(
 				refresh();
 				return;
 			}
-			if (keybindings.matches(data, "tui.select.confirm")) {
+			if (data === "l" || keybindings.matches(data, "tui.select.confirm")) {
 				void editPattern(toolset.name, patternIndex);
 			}
 		};
 
 		const handleMainInput = (data: string): void => {
-			if (keybindings.matches(data, "tui.select.cancel")) {
+			if (data === "h" || keybindings.matches(data, "tui.select.cancel")) {
 				done(undefined);
 				return;
 			}
 			const rows = buildRows(store.get());
-			if (keybindings.matches(data, "tui.select.up") || keybindings.matches(data, "tui.select.down")) {
+			if (data === "k" || data === "j" || keybindings.matches(data, "tui.select.up") || keybindings.matches(data, "tui.select.down")) {
 				const count = rows.length;
-				if (count > 0) index = (index + (keybindings.matches(data, "tui.select.up") ? -1 : 1) + count) % count;
+				if (count > 0) index = (index + (data === "k" || keybindings.matches(data, "tui.select.up") ? -1 : 1) + count) % count;
 				refresh();
 				return;
 			}
@@ -412,7 +420,7 @@ export async function openPermissions(
 				toggleSelected();
 				return;
 			}
-			if (keybindings.matches(data, "tui.select.confirm")) {
+			if (data === "l" || keybindings.matches(data, "tui.select.confirm")) {
 				openSelected();
 			}
 		};
@@ -425,7 +433,7 @@ export async function openPermissions(
 		return {
 			render(width: number): string[] {
 				if (cachedLines !== undefined && cachedWidth === width) return cachedLines;
-				cachedLines = renderScreen(store.get(), width);
+				cachedLines = renderScreen(store.get(), width).map((line) => truncateToWidth(line, Math.max(0, width)));
 				cachedWidth = width;
 				return cachedLines;
 			},
