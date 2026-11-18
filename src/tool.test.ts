@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -107,11 +107,32 @@ test("add_path for an outside directory is decided by the toolset, not by the fi
 	// Before the fix the gate read the directory as a target file path and blocked it.
 	assert.deepEqual(evaluateCall(harnessed.store.get(), "permissions", input, space.project), { block: false });
 	assert.deepEqual(harnessed.store.get().extra_paths, []);
-	// In ask mode the request waits for approval instead of a scope block.
-	setMode(harnessed.store, "permissions", "ask");
+	// The permissions toolset has no ask state, so the request is decided at once.
+	assert.equal(harnessed.store.get().toolsets.find((entry) => entry.name === "permissions")?.enabled, true);
 	const asked = evaluateCall(harnessed.store.get(), "permissions", input, space.project);
-	assert.equal(asked.block, true);
-	if (asked.block) assert.equal(asked.kind, "ask");
+	assert.deepEqual(asked, { block: false });
+});
+
+test("the permissions toolset cannot be set to ask", async (t) => {
+	const space = workspace();
+	t.after(space.cleanup);
+	const harnessed = harness(space, "Allow once");
+	const outcome = await harnessed.run({ action: "set_toolset", name: "permissions", mode: "ask" });
+	assert.equal(outcome.isError, true);
+	assert.match(outcome.text, /only the on and off states/);
+	assert.equal(modeOf(harnessed.store, "permissions"), true);
+	const off = await harnessed.run({ action: "set_toolset", name: "permissions", mode: "off" });
+	assert.equal(off.isError, undefined);
+	assert.equal(modeOf(harnessed.store, "permissions"), false);
+});
+
+test("a stored ask mode for the permissions toolset loads as on", (t) => {
+	const space = workspace();
+	t.after(space.cleanup);
+	const file = join(space.root, "stored.json");
+	writeFileSync(file, JSON.stringify({ version: 2, toolsets: [{ name: "permissions", patterns: ["^permissions$"], enabled: "ask" }] }));
+	const store = new StateStore(file);
+	assert.equal(store.get().toolsets.find((entry) => entry.name === "permissions")?.enabled, true);
 });
 
 test("approval adds the requested directory and keeps the toolset modes", async (t) => {
