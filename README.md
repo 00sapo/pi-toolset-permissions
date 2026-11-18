@@ -167,6 +167,8 @@ The dialog offers four choices:
 Closing the dialog denies the request. Without an interactive dialog, ask calls remain blocked.
 The approval channel remains available for ask tools when the `permissions` toolset is off. It cannot enable off tools.
 
+In RPC mode the extension uses a plain select list, because the full-screen dialog needs a terminal. RPC mode defines the full-screen method but returns `undefined`, so the extension checks the run mode first.
+
 The `permissions` toolset is on at the start. If you turn it off, the model cannot request state changes. Open the screen with `/permissions` and turn the toolset back on. The screen is not a tool, so it always opens.
 
 Ask the assistant to add a toolset. Give the name and the patterns. The dialog shows both before you agree.
@@ -305,6 +307,8 @@ A file from version 1 still loads. The extension drops the old flags, keeps the 
 ## Limits
 
 The path scope covers the usual path arguments of the file tools. A tool that takes a path in another argument is not covered. Add a custom toolset only for tools that you trust.
+
+The `permissions` tool is not a file tool. Its `path` argument names a directory to allow, so the gate does not test it against the current scope. The tool checks that the directory exists and asks for your approval before it saves the change. If the `permissions` toolset is off, the change is blocked.
 
 Native Windows has no sandbox backend, so the shell tools block the call while a sandbox is on. Start pi inside WSL2, or turn the sandbox off.
 

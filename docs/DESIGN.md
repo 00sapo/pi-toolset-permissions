@@ -24,7 +24,7 @@ The `permissions` toolset holds the `permissions` tool. Off blocks state changes
 
 1. The model calls a tool.
 2. Pi sends the call to the `tool_call` handler.
-3. The gate blocks paths outside the scope before any approval.
+3. The gate blocks paths outside the scope before any approval. The `permissions` tool is the exception: its `path` argument names a directory to allow, so the tool checks that directory and asks the user before it saves the change.
 4. The classifier collects the on and ask toolsets that match. On takes priority over ask.
 5. If only off toolsets match, the gate blocks without a dialog. Ask calls pause inside the gate until the user answers.
 6. The bash wrapper adds the sandbox command. A missing backend blocks the call.
@@ -44,6 +44,7 @@ Local state changes and session boundaries clear pending approvals. Each target 
 
 The approval channel remains available when the `permissions` toolset is off. It cannot approve a target that matches only off toolsets.
 Without an interactive dialog, the extension denies approval. Denial feedback returns to the AI as tool output.
+In RPC mode, `ctx.ui.custom` exists but returns `undefined`, so the approval uses `ctx.ui.select`. The full-screen dialog runs only when `ctx.mode` is `tui`, because the screen component needs a terminal.
 
 ## The pattern screen
 
@@ -55,6 +56,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 
 - Deny a tool that no toolset matches, but ask the user first. A silent allow is not safe, and a silent deny stops work.
 - Gate state changes through the `permissions` toolset. Keep `request_tool` available only as an approval channel for ask targets. The `/permissions` command runs outside the gate.
+- Do not read the `path` argument of the `permissions` tool as a target file path. The gate would block `add_path` before its own dialog, and the scope could never grow. The tool still checks that the directory exists, saves the canonical path, and asks before the change. The `permissions` toolset mode still applies, so an off toolset blocks the change.
 - Keep the default patterns in the code and let the state file replace them. A user can tune a shipped toolset without a fork. The state file records the full list, so a pattern edit is saved like a custom toolset.
 - Keep the `permissions` toolset in the state file. The screen shows it next to the other toolsets, so the user sees the whole picture.
 - Treat bash as one tool. The execute toolset sets the outer limit, and the sandbox sets the inner limit. Command text analysis is fragile, so the extension does not use it.
@@ -107,7 +109,9 @@ Start the suite with `node --test src/`.
 
 The tests cover the classifier, the scope, the state store, the gate, and the sandbox plans. The core tests use only Node.js, so they start without pi.
 
-The suite does not import `index.ts`, `tool.ts`, or `ui.ts`, because those files need the pi runtime. A manual start with `pi -e .` covers the wiring, the screen, and a real sandbox call.
+`src/tool.test.ts` imports the real `tool.ts`. A loader hook replaces the `typebox` and host imports, which the repository does not install. The test then calls the permissions tool with a fake dialog, so the `add_path` consent path runs without pi.
+
+The suite does not import `index.ts` or `ui.ts`, because those files need the pi runtime. A manual start with `pi -e .` covers the wiring, the screen, and a real sandbox call.
 
 ## Limits
 
