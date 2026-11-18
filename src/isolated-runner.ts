@@ -73,6 +73,9 @@ export class IsolatedRunner {
 		child.stdout.on("data", (chunk: Buffer) => this.bridge.feed(chunk));
 		child.stdout.on("end", () => this.bridge.fail(new Error(`Inner Pi closed its output. ${this.stderr}`)));
 		child.stderr.on("data", (chunk: Buffer) => { this.stderr = (this.stderr + chunk.toString("utf8")).slice(-8192); });
+		// A write to a child that already exited reports EPIPE on the stream. The exit handler
+		// reports the real cause, so the stream error only needs a listener.
+		child.stdin.on("error", (error) => { this.bridge.fail(new Error(`Inner Pi input failed: ${error.message}. ${this.stderr}`)); });
 		child.on("error", (error) => this.bridge.fail(error));
 		child.on("exit", (code, signal) => {
 			this.bridge.fail(new Error(`Inner Pi exited (${signal ?? code}). ${this.stderr}`));
