@@ -48,6 +48,18 @@ The approval channel remains available when the `permissions` toolset is off. It
 Without an interactive dialog, the extension denies approval. Denial feedback returns to the AI as tool output.
 In RPC mode, `ctx.ui.custom` exists but returns `undefined`, so the approval uses `ctx.ui.select`. The full-screen dialog runs only when `ctx.mode` is `tui`, because the screen component needs a terminal.
 
+## Reporting a waiting question
+
+Herdr shows the pane as blocked and notifies the user while an agent waits for an answer. Its Pi integration reads one event on the Pi event bus: `herdr:blocked` with `{ active: true, label }` opens a block, and `{ active: false }` closes one. Herdr counts the open blocks.
+
+Pi already announces each blocking extension dialog. It publishes `ui_prompt_start` and `ui_prompt_end` around `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, `ctx.ui.editor()`, and `ctx.ui.custom()`. `src/notify.ts` follows those events, so one place reports the approval dialog, the unknown-tool question, the `permissions` confirmations, and a dialog that the isolated executor forwards from the sandbox. The outer process shows a forwarded dialog in its own window, so that dialog also raises the outer prompt events.
+
+Pi opens one span for a group of nested dialogs. The reporter therefore tracks one open block, so Herdr sees one opening for one closing.
+
+A prompt that the user starts is not a question for the user. The `/permissions` command runs inside `suppressPrompts`, so browsing the screen reports nothing, and the suppressed end consumes no block. The check counts the screens that are open, because the start event arrives on a microtask.
+
+A shutdown with a dialog still open emits one closing event, so a pane never stays blocked. A missing bus, a throwing listener, and a host without Herdr change nothing: every emit call is guarded, and the dialog never waits for the host.
+
 ## Subagent sessions
 
 A subagent runs in the same process as its parent, in a child session with its own resource loader. Each session gets its own copy of every extension module, so the copies share no ordinary module state.
@@ -86,6 +98,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 - Treat the `permissions` toolset as binary. It is on or off. Ask would ask the user twice for one change, once in the gate and once in the tool dialog.
 - Treat a link inside the project as a project path. The project contains the link, so the gate accepts a path through it before link resolution. A direct path to the link target still needs an allowed root. Extra roots keep canonical containment, because the user names those directories explicitly.
 - Fail closed. A missing backend or a broken gate blocks the call.
+- Follow Pi's prompt events instead of reporting each dialog by hand. Pi already announces every blocking dialog and merges nested ones, so one listener covers the approval dialog, the unknown-tool question, and the change confirmations. A report that the host misses never blocks the dialog.
 - Load the extension once per session. A session claim stops a second copy in the same session, and it lets a child session install its own gate.
 - Write the state file with a temporary file and a rename. A crash cannot leave half a file.
 
@@ -105,6 +118,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 | `src/patterns.ts` | Pure edits of a pattern list, and the tool names that a pattern matches |
 | `src/ui.ts` | The `/permissions` screen and the pattern editor |
 | `src/sessions.ts` | Cross-session registry: session claims, child links, ask forwarding |
+| `src/notify.ts` | Reports a waiting question to the terminal host through `herdr:blocked` |
 
 ## State
 
