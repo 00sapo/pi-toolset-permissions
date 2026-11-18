@@ -83,10 +83,10 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 - Treat bash as one tool. The execute toolset sets the outer limit, and the sandbox sets the inner limit. Command text analysis is fragile, so the extension does not use it.
 - Put the sandbox in the kernel. Linux uses bubblewrap or unshare, macOS uses Seatbelt, and native Windows fails closed.
 - Keep one state file for all sessions. Permission state is not conversation state.
-- Save the canonical path when the user adds a directory. A symlink cannot add a larger tree than the dialog shows.
+- Treat the `permissions` toolset as binary. It is on or off. Ask would ask the user twice for one change, once in the gate and once in the tool dialog.
 - Treat a link inside the project as a project path. The project contains the link, so the gate accepts a path through it before link resolution. A direct path to the link target still needs an allowed root. Extra roots keep canonical containment, because the user names those directories explicitly.
 - Fail closed. A missing backend or a broken gate blocks the call.
-- Load the extension once. A global marker stops a second copy after `pi install` and `-e`. The shutdown handler clears the marker, so `/reload` works.
+- Load the extension once per session. A session claim stops a second copy in the same session, and it lets a child session install its own gate.
 - Write the state file with a temporary file and a rename. A crash cannot leave half a file.
 
 ## Modules
