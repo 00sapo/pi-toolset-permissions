@@ -28,6 +28,8 @@ pi -e npm:pi-toolset-permissions
 
 Then open the screen with `/permissions`.
 
+An optional [isolated executor prototype](docs/ISOLATED.md) delegates tool execution to a sandboxed Pi process without a second model. It uses a separate entry point and does not change the default behavior.
+
 ## Main features
 
 - Four toolsets that ship with the extension: read, write, execute, and permission.
