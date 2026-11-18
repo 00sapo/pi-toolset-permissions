@@ -219,6 +219,8 @@ Press `a` to add a directory. Type a path. The extension makes sure that the pat
 
 The project root cannot be removed. The extension saves the resolved path, so a symlink cannot add a larger tree than the dialog shows.
 
+A link inside the project counts as a project path. Reading or writing through that link is allowed even when the target is outside the project, because the project contains the link. A direct path to the target stays blocked unless an extra path covers it. For an extra path, the extension resolves the link and blocks a target outside that root.
+
 ## The sandboxes
 
 The screen lists two sandboxes.
