@@ -341,6 +341,23 @@ A tool that no toolset matches is blocked. Pi then asks you one question with th
 
 Without a dialog, the call is blocked.
 
+## Herdr and the pending question
+
+Herdr is a terminal workspace manager for coding agents. It reads one event on the Pi event bus to learn that an agent waits for you. The event is `herdr:blocked`. The payload `{ active: true, label }` marks the pane as blocked and sends a notification. The payload `{ active: false }` clears the mark.
+
+This extension emits that event around the dialogs that wait for your answer:
+
+- the approval dialog of an ask toolset,
+- the question for a tool that no toolset matches,
+- each confirmation that a `permissions` action shows,
+- a dialog that the isolated executor forwards from the sandbox.
+
+The dialog sets the label, so the Herdr sidebar and the notification show the question. A screen that you open with `/permissions` reports nothing, because it is not a question for you.
+
+A Herdr Pi integration (`herdr integration install pi`) must be present. Without it, no listener reads the event and nothing changes. Outside Herdr, the event reaches no listener either.
+
+The event only reports. It does not control the dialog. Herdr changes the state of the pane and the notification. The extension never waits for an answer from Herdr, so a missing or slow host cannot delay a dialog.
+
 ## State file
 
 The state lives in one file: `~/.pi/agent/permissions.json`.
