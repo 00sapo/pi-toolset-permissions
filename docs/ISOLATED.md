@@ -58,17 +58,57 @@ Calls execute one at a time. The protocol timeout does not run while a forwarded
 
 Commands that you type with `!` run on the host. The layers cover the tools that the model calls, as in the normal extension. Do not type a `!` command when you need the layer restrictions to apply.
 
-## Boundary and limits
+## Filesystem view
 
-The no-network layer removes IP access. A relay inside the namespace connects the inner model endpoint to one host Unix socket. A Unix socket is a local process communication endpoint. The authenticated host server accepts only scripted model requests and does not forward network traffic.
+The sandbox starts with an empty root. Only these paths become visible:
 
-The sandbox binds the host root and isolates process IDs. The read-only layer makes that root read-only and keeps private `/tmp`, `/run`, and `/dev` mounts writable. Read-only therefore protects host files, not every filesystem location inside the sandbox.
+| Path | Mode | Why |
+|---|---|---|
+| `/usr` and the directories that link into it | read-only | Programs and shared libraries. |
+| API keys in the environment | absent | Only a fixed list of variables enters the sandbox. |
+| Selected `/etc` entries | read-only | Name services, TLS certificates, the loader cache, and the shell profile. |
+| A generated `/etc/passwd` and `/etc/group` | generated | One account named `pi`. Host accounts stay outside. |
+| Node.js, Pi, and their bin directories | read-only | The inner process. |
+| `/run/pi-bin` | symlinks | `node` and `pi` under a sandbox path, so `PATH` names no host directory. |
+| The relay file | read-only | The program that connects the inner Pi to the control socket. |
+| The working directory | read-only or writable | The project. The read-only layer decides the mode. |
+| Each path from `--inner-extensions` | read-only | The loaded extensions. |
+| The git directory of a worktree | follows the read-only layer | Git needs it, and git writes its index there. |
+| `/tmp`, `/run`, `/dev`, `/proc`, and the home directory | private and empty | Temporary files, the control socket, devices, processes, and `HOME`. |
+| `/proc/sys/kernel/random` | empty | The host boot identifier stays outside. Random data still comes from `/dev/urandom`. |
 
-The root mount exposes readable host files, including credentials on disk. Unix sockets outside the masked directories remain accessible. A reachable host service can bypass the intended restrictions. This prototype is not a complete boundary for hostile extensions.
+Everything else stays outside the view. That includes the rest of your home directory, `~/.ssh`, `~/.pi`, other projects, `/root`, mounted disks, host Unix sockets, and the host name.
 
-The inner environment excludes inherited API keys and Node loader variables. This does not hide credentials that remain readable through the filesystem. The prototype needs narrower filesystem mounts before use with untrusted code.
+The sandbox has its own IPC and host-name namespaces. The host name inside is always `sandbox`. The environment names no host directory: `PATH` uses `/run/pi-bin`, and `HOME` is `/tmp/home`.
 
-The control socket carries HTTP model requests. RPC uses standard input and output. An extension that corrupts those streams can stop the executor. The protocol is not a boundary against forged results from a hostile extension.
+The read-only layer does not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host.
+
+## Limits
+
+The no-network layer removes IP access. A relay inside the sandbox connects the inner model endpoint to one host Unix socket. A Unix socket is a local process communication endpoint. The authenticated host server accepts only scripted model requests and does not forward network traffic.
+
+The empty root does not remove every path from the host. Your working directory is mounted, so a tool can read every file under it. The selected `/etc` entries are mounted, so a file in one of them is readable.
+
+A symbolic link inside the project can reach only a mounted path. A link to a host path outside the mounts does not resolve. For example, a link to `~/.ssh` fails, and a link to `/etc/passwd` works because that file is mounted.
+
+The kernel version and the hardware names remain visible, because a program cannot run without the kernel interface.
+
+Process IDs are isolated, and `/proc` shows only the sandbox. The inner environment excludes inherited API keys and Node loader variables.
+
+The control socket carries HTTP model requests. RPC uses standard input and output. An extension that corrupts those streams can stop the executor. The protocol is not a boundary against forged results from a hostile extension. An extension inside the sandbox already holds the token, so the socket adds no reach to it.
+
+## Portability
+
+The prototype runs on Linux only. It needs bubblewrap 0.8 or newer, unprivileged user namespaces, and Node.js 22.19 or newer. Other platforms fail closed with a message, and no partial mode runs without the sandbox.
+
+These host layouts are supported:
+
+- A merged `/usr`, where `/bin`, `/sbin`, `/lib`, and `/lib64` are symlinks into `/usr`. Debian 12 and 13, and Arch Linux, use this layout.
+- A split layout, where those directories are real. The launcher mounts them and creates no symlink.
+
+A missing `/etc` entry is skipped, so a distribution without `/etc/alternatives` or `/etc/terminfo` still starts. Only Debian and its derivatives have `/etc/alternatives`.
+
+The prototype was verified on Debian 13, which uses a merged `/usr`. The launcher tests cover the split layout and a missing `/etc` entry. A full run inside a container was not possible, because the container kernel refused to create the namespaces.
 
 ## Tests
 

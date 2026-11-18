@@ -28,7 +28,7 @@ pi -e npm:pi-toolset-permissions
 
 Then open the screen with `/permissions`.
 
-An optional [isolated executor prototype](docs/ISOLATED.md) delegates tool execution to a sandboxed Pi process without a second model. It uses a separate entry point and does not change the default behavior.
+An optional [isolated executor prototype](docs/ISOLATED.md) delegates tool execution to a sandboxed Pi process without a second model. It uses a separate entry point, does not change the default behavior, and runs on Linux only.
 
 ## Main features
 
