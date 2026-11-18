@@ -11,8 +11,7 @@ sandboxes using a simple menu during the session.
 
 You can even tell the AI what it should disable e.g. _"forbid writing on that file"_, or _"run in read-only mode now"_. The extension provides a tool to modify the list of allowed toolsets.
 
-The LLM can ask to change the permissions at any time, but you can disable that with _"Disable the
-permission tool"_ (or by manually disabling the toolset `permissions`).
+The AI can request state changes when the `permissions` toolset is on. Turn that toolset off to block these requests.
 
 ## Install
 
@@ -30,7 +29,7 @@ Then open the screen with `/permissions`.
 
 ## Main features
 
-- Four toolsets that ship with the extension: read, write, execute, and permission.
+- Four toolsets that ship with the extension: read, write, execute, and permissions.
 - Editable patterns. Press enter on a toolset to see its regular expressions and the tools that they match.
 - Custom toolsets that match tool names with regular expressions.
 - Two bash sandboxes: a read-only filesystem and no network.
@@ -41,7 +40,7 @@ Then open the screen with `/permissions`.
 
 ## Concept
 
-A toolset is a group of tool names. You turn the whole group on or off together.
+A toolset is a group of tool names. Each toolset has one state: off, on, or ask.
 
 A pattern is a regular expression. The extension tests each pattern against a tool name.
 
@@ -49,7 +48,8 @@ A sandbox is an operating-system boundary for shell commands.
 
 A path scope is the set of directories that file tools can touch. Project scope allows the project directory and the extra paths. Everywhere scope removes the path limit.
 
-The permission toolset holds the `permissions` tool. It is a normal toolset. If you turn it off, the model cannot call that tool, but the `/permissions` command still works. Use the command to turn the toolset back on.
+The `permissions` toolset holds the `permissions` tool. Off blocks state changes through that tool, but still permits approval requests for ask tools.
+The `/permissions` command always works. Use that command to turn the toolset back on.
 
 Bash is one tool. Its patterns sit in the execute toolset. The sandbox is a second layer. It starts the whole call inside the boundary, and it does not read the command text.
 
@@ -90,7 +90,7 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
    > read                    [ON] 4 patterns
      write                   [OFF] 4 patterns
      execute                 [ON] 4 patterns
-     permission              [ON] 1 pattern
+     permissions             [ON] 1 pattern
 
  Sandboxes
      Read-only filesystem    [OFF]
@@ -102,18 +102,18 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
  Paths
      /home/user/project  project root
 
- space toggle · enter patterns · s scope · a add path · d remove path · esc close
+ space off → on → ask · enter patterns · s scope · a add path · d remove path · esc close
 ```
 
 | Key | Action |
 | --- | --- |
-| up, down | move the selection |
-| space | turn the selected toolset or sandbox on or off, or switch the scope |
-| enter | open the patterns of the selected toolset. On a sandbox or the scope, enter does what space does |
+| up/k, down/j | move the selection |
+| space | cycle a toolset through off → on → ask → off, toggle a sandbox, or switch the scope |
+| enter/l | open the patterns of the selected toolset. On a sandbox or the scope, enter does what space does |
 | s | switch the scope between project and everywhere |
 | a | add a directory to the paths |
 | d | remove the selected extra path |
-| esc | close the screen, or leave the pattern screen |
+| esc/h | close the screen, or leave the pattern screen |
 
 Each change is saved at once. The esc key never loses work.
 
@@ -134,17 +134,48 @@ The write toolset is off at the start. Turn it on before the model can change fi
 
 ## The toolsets
 
-The extension ships four toolsets. Read tools, write tools, and execute tools hold the usual tool names of pi. The permission toolset holds only the `permissions` tool.
+The extension ships four toolsets. Read tools, write tools, and execute tools hold the usual tool names of pi. The `permissions` toolset holds only the `permissions` tool.
 
-Press space to turn a toolset on or off. A toolset that is off matches no tool.
+Press space to cycle a toolset through off → on → ask → off.
 
-The permission toolset is on at the start. If you turn it off, the model cannot ask you for a change. Open the screen with `/permissions` and turn the toolset back on. The screen is not a tool, so it always opens.
+| State | Behavior |
+| --- | --- |
+| off | Block its tools unless another toolset allows them. Do not open an approval dialog. |
+| on | Allow its tools without a permission request. |
+| ask | Require approval for each exact call. Show the tool, full input, and the AI reason. |
+
+If both on and ask toolsets match, on takes precedence. Path limits and sandboxes still apply after approval.
+
+In ask mode, the AI explains the action and reason, then calls the target tool directly.
+The gate pauses that call and shows the approval dialog. If you approve, that same call runs immediately.
+The AI does not retry the call or request approval through a separate tool.
+Only field labels appear in bold. Bash commands use colored syntax without bold text.
+If the input exceeds four terminal rows, the dialog replaces it with `[...]`. The approval still applies to the full input.
+Select `Inspect` to read the full input in a scrollable view. Use `j/k`, arrow keys, or Page Up/Page Down.
+Press `h` or Escape to return without approval. Bash, read arguments, and edit content use syntax colors.
+
+If an agent provides no specific reason, the dialog states that fact and shows its current task and concrete action.
+The enable choice shows the names of the affected toolsets.
+
+The dialog offers four choices:
+
+- Allow once: run the waiting call with its exact input. Keep ask mode.
+- Deny: block the call.
+- Deny with explanation: block the call and return your explanation to the AI.
+- Allow and enable toolset NAME: approve and change the named ask toolsets to on.
+
+Closing the dialog denies the request. Without an interactive dialog, ask calls remain blocked.
+The approval channel remains available for ask tools when the `permissions` toolset is off. It cannot enable off tools.
+
+The `permissions` toolset is on at the start. If you turn it off, the model cannot request state changes. Open the screen with `/permissions` and turn the toolset back on. The screen is not a tool, so it always opens.
 
 Ask the assistant to add a toolset. Give the name and the patterns. The dialog shows both before you agree.
 
 Press `d` on a toolset row to delete a custom toolset. A shipped toolset cannot be deleted. You can change the patterns of a shipped toolset, and the state file keeps your change.
 
-When a toolset is off, its patterns match nothing. If no other toolset matches a tool, pi asks you about that tool.
+An off toolset blocks its tools unless another toolset allows them. It never opens the unknown-tool dialog.
+If the `permissions` toolset is on, the AI can request activation with `set_toolset`. Each change needs your approval.
+Otherwise, use `/permissions` to change an off toolset.
 
 ## The patterns
 
@@ -159,7 +190,7 @@ Press enter on a toolset row to open its pattern screen.
      ^(read|list|search|get)_             no tool
      _(read|list|grep)$                   hypa_grep
 
- enter edit · a add · d delete · space toggle · esc back
+ enter edit · a add · d delete · space off → on → ask · esc back
 ```
 
 Each row holds one regular expression and the tool names that it matches. The extension tests each pattern against the name of every tool that pi knows, and it ignores case.
@@ -168,11 +199,11 @@ The screen uses these keys:
 
 | Key | Action |
 | --- | --- |
-| space | turn the toolset on or off |
-| enter | edit the selected pattern |
+| space | cycle off → on → ask → off |
+| enter/l | edit the selected pattern |
 | a | add a pattern |
 | d | delete the selected pattern |
-| esc | go back to the toolset list |
+| esc/h | go back to the toolset list |
 
 The editor checks each pattern. A pattern must compile as a JavaScript regular expression, must not be empty, and must be 500 characters at most. A toolset holds at least one pattern and at most 32.
 
@@ -214,24 +245,26 @@ Commands that you type with `!` are not sandboxed. A sandbox covers only the she
 
 ## The permissions tool
 
-The model uses one tool with eight actions.
+The model uses one tool with nine actions.
 
 | Action | Parameters | Effect |
 | --- | --- | --- |
 | status | none | show the toolsets, the sandboxes, the scope, and the paths |
+| request_tool | tool, input, reason | request approval for one exact call in ask mode |
 | set_scope | scope | set the scope to project or everywhere |
 | add_path | path | allow one more directory in project scope |
 | remove_path | path | remove one extra directory |
 | add_toolset | name, patterns | add a custom toolset |
 | remove_toolset | name | delete a custom toolset |
-| set_toolset | name, enabled | turn a toolset on or off |
+| set_toolset | name, mode | set a toolset to off, on, or ask |
 | set_sandbox | sandbox, enabled | turn a sandbox on or off |
 
-The `status` action only reads. The other seven actions ask you to agree before they change the state.
+The `status` action only reads. State changes and `request_tool` require your approval.
 
-The model can turn off the permission toolset, because it is a normal toolset. If the model turns it off, the model cannot call the tool again in that session. Run `/permissions` to turn it back on.
+The model can request that you turn off the `permissions` toolset. After approval, only ask-mode approval requests remain available through the tool.
+Run `/permissions` to turn the `permissions` toolset back on.
 
-`set_toolset` changes the on/off state of a toolset. The model cannot change a pattern with the tool. You change a pattern on the screen, where the list of matches shows the effect at once.
+`set_toolset` accepts `mode`: `off`, `on`, or `ask`. Existing callers can still use boolean `enabled` for on and off. The model cannot change a pattern with the tool. You change a pattern on the screen, where the list of matches shows the effect at once.
 
 You can tell the assistant what you want in your own words. Examples:
 
@@ -253,7 +286,7 @@ Without a dialog, the call is blocked.
 
 The state lives in one file: `~/.pi/agent/permissions.json`.
 
-The file is plain JSON with two-space indentation and a final newline. It holds the toolsets, their patterns, the scope, the paths, and the sandboxes. It also holds your changes to the shipped toolsets, so it is the only file that you need to keep.
+The file is plain JSON with two-space indentation and a final newline. A toolset stores `enabled` as `false`, `true`, or `"ask"`. It holds the toolsets, their patterns, the scope, the paths, and the sandboxes. It also holds your changes to the shipped toolsets, so it is the only file that you need to keep.
 
 The extension never writes the current time or another value that changes by itself. You can track the file in git and read a diff before you commit it.
 
@@ -263,6 +296,9 @@ The extension never writes the current time or another value that changes by its
 The extension writes a temporary file and renames it. A crash cannot leave half a file.
 
 A missing file gives the default state. A corrupt file gives the default state too.
+
+The old toolset name `permission` loads as `permissions` without changes to its mode or patterns.
+If both names exist, the `permissions` entry takes precedence.
 
 A file from version 1 still loads. The extension drops the old flags, keeps the custom toolsets, and writes the default patterns for the shipped toolsets.
 
