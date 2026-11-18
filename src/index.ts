@@ -5,9 +5,12 @@ import { createBashTool, createPowerShellTool } from "@earendil-works/pi-coding-
 import { evaluateCall } from "./gate.ts";
 import { wrapBash } from "./sandboxes.ts";
 import { MAX_TOOLSETS, StateStore } from "./state.ts";
-import { registerPermissionsTool, statusLine } from "./tool.ts";
+import { registerPermissionsTool } from "./tool.ts";
+import { statusLine } from "./status.ts";
 import type { Toolset } from "./types.ts";
 import { openPermissions } from "./ui.ts";
+import { install } from "./isolated.ts";
+import { layersEnabled, platformPolicy } from "./platform.ts";
 
 const LOADED = Symbol.for("pi-toolset-permissions.loaded");
 const MAX_REASON = 240;
@@ -86,13 +89,20 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 	if (marker[LOADED] === true) return;
 	marker[LOADED] = true;
 
+	// Linux has a boundary that covers every tool. On that platform this entry point hands the
+	// tool set to the isolated executor, so no tool runs on the host while a layer is on.
+	if (platformPolicy().plan === "isolated") {
+		install(pi, { registerPermissionsCommand: true });
+		return;
+	}
+
 	try {
 		const store = new StateStore();
 		let activeCtx: ExtensionContext | undefined;
 
 		const publish = (ctx: ExtensionContext): void => {
 			try {
-				ctx.ui.setStatus("permissions", statusLine(store.get()));
+				ctx.ui.setStatus("permissions", statusLine(store.get(), "bash"));
 			} catch {
 				// The footer is cosmetic. Never fail a handler for it.
 			}
@@ -163,7 +173,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 					toolNames = [];
 				}
 				try {
-					await openPermissions(store, ctx, toolNames);
+					await openPermissions(store, ctx, toolNames, "bash");
 				} catch (error) {
 					if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
 				}
@@ -197,6 +207,24 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				store.reload();
 			} catch {
 				// An unreadable file keeps the state that was loaded in the constructor.
+			}
+			const policy = platformPolicy();
+			// Windows has no backend, so a saved layer must not keep blocking every shell call.
+			if (!layersEnabled(policy)) {
+				const layers = store.get().sandboxes;
+				if (layers.readonly_bash || layers.no_network) {
+					store.update((current) => ({ ...current, sandboxes: { readonly_bash: false, no_network: false } }));
+					if (ctx.hasUI) ctx.ui.notify(policy.reason ?? "The sandbox is disabled here.", "warning");
+				}
+				publish(ctx);
+				return;
+			}
+			// Linux has an entry point that covers every tool, so this one must not imply otherwise.
+			if (policy.plan === "isolated" && ctx.hasUI) {
+				ctx.ui.notify(
+					"This entry point sandboxes bash only. For every tool, start Pi with src/isolated.ts instead.",
+					"warning",
+				);
 			}
 			publish(ctx);
 		});

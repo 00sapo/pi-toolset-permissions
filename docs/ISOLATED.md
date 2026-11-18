@@ -1,31 +1,37 @@
-# Experimental isolated executor
+# Isolated executor
 
-The `src/isolated.ts` entry point runs tool calls in a second Pi process inside a Linux bubblewrap sandbox. The inner Pi uses no real model. A local OpenAI-compatible server supplies tool calls, and RPC returns results and supported dialogs.
+On Linux, `src/index.ts` delegates every tool call to a second Pi process inside a bubblewrap sandbox. The inner Pi uses no real model. A local OpenAI-compatible server supplies tool calls, and RPC returns results and supported dialogs.
 
 The executor follows the two sandbox layers of `/permissions`. The read-only layer denies writes to host files. The no-network layer denies outbound IP traffic. A process boundary is fixed when the process starts, so each layer combination uses its own process.
 
-This prototype is separate from the normal permissions extension. The default entry point stays unchanged.
+The extension picks the boundary by platform. Linux uses this executor. macOS wraps `bash` only. Windows disables the layers. See [the sandboxes](../README.md#the-sandboxes).
 
-## Start the prototype
+## Start Pi
 
 Install Pi 1.5.2, bubblewrap, and Node.js 22.19 or newer on the Linux host. Make sure that `pi`, `bwrap`, and `node` are available through `PATH`.
 
-From this repository, start the outer Pi with only the experimental extension:
+From this repository, start the outer Pi with only this extension:
 
 ```sh
-pi --no-extensions --no-mcp -e ./src/isolated.ts
+pi --no-extensions --no-mcp -e ./src/index.ts
 ```
+
+`./src/isolated.ts` is the same executor as a standalone entry point, for a test that leaves the normal wiring out.
 
 To load third-party extensions inside the sandbox, supply their paths as a JSON array:
 
 ```sh
-pi --no-extensions --no-mcp -e ./src/isolated.ts \
+pi --no-extensions --no-mcp -e ./src/index.ts \
   --inner-extensions '["/absolute/path/to/extension.ts"]'
 ```
 
 Use `--inner-pi /absolute/path/to/pi` or `--inner-node /absolute/path/to/node` if the executables are absent from `PATH`.
 
 Open `/permissions` in the outer Pi to turn the layers on and off. A change restarts the inner process with the new combination.
+
+The screen names the coverage and the platform. Under the Sandboxes heading it states that every tool runs inside the sandbox and that the executor runs on Linux only. The footer shows `sandboxes:1/2 all tools`, or `sandboxes:off` when no layer is on.
+
+On macOS and Windows the layers are marked `[unavailable here]`. Turning one on asks for confirmation first, because every call then fails until you turn it off.
 
 Do not load the original third-party extensions in the outer Pi. Their initialization code otherwise runs outside the sandbox. The prototype refuses to start while another extension registers host tools, but it cannot undo code that already ran.
 

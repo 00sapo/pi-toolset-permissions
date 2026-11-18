@@ -6,7 +6,10 @@ import type { SandboxInfo } from "./sandboxes.ts";
 import { canonicalPath, resolveDirectory } from "./scope.ts";
 import { appendPattern, matchingNames, removePattern, replacePattern } from "./patterns.ts";
 import { MAX_EXTRA_PATHS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns } from "./state.ts";
-import { statusText } from "./tool.ts";
+import { statusText } from "./status.ts";
+import { sandboxMenuNote, sandboxRowMark, sandboxSectionTitle } from "./sandbox-scope.ts";
+import { layersEnabled, platformPolicy, requiresBashOnly } from "./platform.ts";
+import type { SandboxTarget } from "./sandbox-scope.ts";
 import type { PermissionsState, Toolset } from "./types.ts";
 
 type Row =
@@ -25,6 +28,7 @@ const SECTION: Record<Row["kind"], string> = {
 };
 
 const LABEL_WIDTH = 24;
+
 const NO_MATCH = "no tool";
 
 function messageOf(error: unknown): string {
@@ -44,9 +48,11 @@ export async function openPermissions(
 	store: StateStore,
 	ctx: ExtensionContext,
 	toolNames: string[] = [],
+	target: SandboxTarget = "bash",
+	platform: NodeJS.Platform = process.platform,
 ): Promise<void> {
 	if (ctx.mode !== "tui") {
-		ctx.ui.notify(statusText(store.get()), "info");
+		ctx.ui.notify(statusText(store.get(), target, platform), "info");
 		return;
 	}
 
@@ -84,7 +90,7 @@ export async function openPermissions(
 
 		const buildRows = (state: PermissionsState): Row[] => {
 			const rows: Row[] = state.toolsets.map((toolset) => ({ kind: "toolset", toolset }));
-			for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
+					for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
 			rows.push({ kind: "scope" });
 			[ctx.cwd, ...state.extra_paths].forEach((path, position) => {
 				rows.push({ kind: "path", path, root: position === 0 });
@@ -103,7 +109,9 @@ export async function openPermissions(
 				}
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
-					return `   ${marker} ${name}${onOff(state.sandboxes[item.info.key])}`;
+					const mark = sandboxRowMark(target, platform);
+					const shown = mark.length === 0 ? "" : theme.fg("warning", mark);
+					return `   ${marker} ${name}${onOff(state.sandboxes[item.info.key])}${shown}`;
 				}
 				case "scope":
 					return `   ${marker} ${"All paths".padEnd(labelWidth)}[${state.scope.toUpperCase()}]`;
@@ -120,13 +128,18 @@ export async function openPermissions(
 			const lines = [` ${theme.bold("Permissions")}`, ""];
 			let section: string | null = null;
 			rows.forEach((item, position) => {
-				const title = SECTION[item.kind];
+				const title = item.kind === "sandbox" ? sandboxSectionTitle(platform) : SECTION[item.kind];
 				if (title !== section) {
 					section = title;
 					if (position > 0) lines.push("");
 					lines.push(` ${theme.bold(title)}`);
 				}
 				lines.push(rowText(state, item, position === index, width));
+				// The sandbox coverage note belongs under its own section, not at the end.
+				const next = rows[position + 1];
+				if (item.kind === "sandbox" && (next === undefined || next.kind !== "sandbox")) {
+					for (const note of sandboxMenuNote(target, platform)) lines.push(theme.fg("dim", ` ${note}`));
+				}
 			});
 			lines.push(
 				"",
@@ -186,7 +199,25 @@ export async function openPermissions(
 			}));
 		};
 
-		const toggleSandbox = (info: SandboxInfo): void => {
+		const toggleSandbox = async (info: SandboxInfo): Promise<void> => {
+			const policy = platformPolicy(platform);
+			// Windows has no backend. The switch stays off and the note names the fix.
+			if (!layersEnabled(policy)) {
+				notify(policy.reason ?? policy.coverage, "warning");
+				refresh();
+				return;
+			}
+			// macOS covers bash only. A layer that wraps one tool must not look like full coverage.
+			if (requiresBashOnly(policy)) {
+				const proceed = await ctx.ui.confirm(
+					"Sandbox covers bash only",
+					`${policy.coverage}\n\n${policy.reason ?? ""}\n\nTurn the layer on?`.trim(),
+				);
+				if (proceed !== true) {
+					refresh();
+					return;
+				}
+			}
 			update((current) => ({
 				...current,
 				sandboxes: { ...current.sandboxes, [info.key]: !current.sandboxes[info.key] },
@@ -304,7 +335,7 @@ export async function openPermissions(
 			const item = buildRows(store.get())[index];
 			if (item === undefined) return;
 			if (item.kind === "toolset") toggleToolset(item.toolset);
-			else if (item.kind === "sandbox") toggleSandbox(item.info);
+			else if (item.kind === "sandbox") void toggleSandbox(item.info);
 			else if (item.kind === "scope") cycleScope();
 			refresh();
 		};

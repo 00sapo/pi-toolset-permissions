@@ -16,13 +16,24 @@ export function layerKey(layers: SandboxLayers): string {
 }
 
 /** True when the loaded tool belongs to this extension and not to a third party. */
-export function isOwnTool(ownPath: string, tool: { sourceInfo: { source?: string; path?: string } }): boolean {
-	return tool.sourceInfo.source !== "builtin" && tool.sourceInfo.path === ownPath;
+export function isOwnTool(ownPath: string | readonly string[], tool: { sourceInfo: { source?: string; path?: string } }): boolean {
+	if (tool.sourceInfo.source === "builtin") return false;
+	const paths = typeof ownPath === "string" ? [ownPath] : ownPath;
+	return tool.sourceInfo.path !== undefined && paths.includes(tool.sourceInfo.path);
+}
+
+/**
+ * Every file that belongs to this extension. A tool registered by any of them is not
+ * third-party code, so it may become a delegate.
+ */
+export function ownPaths(modulePath: string): string[] {
+	const index = modulePath.replace(/isolated\.ts$/, "index.ts");
+	return index === modulePath ? [modulePath] : [modulePath, index];
 }
 
 /** Tools from other extensions. They run in the host process, so they cannot be sandboxed. */
 export function foreignTools(
-	ownPath: string,
+	ownPath: string | readonly string[],
 	tools: Array<{ name: string; sourceInfo: { source?: string; path?: string } }>,
 ): string[] {
 	return tools

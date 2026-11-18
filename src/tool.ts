@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-codi
 import { Type } from "typebox";
 import type { Static } from "typebox";
 import { SANDBOXES } from "./sandboxes.ts";
+import { statusLine, statusText } from "./status.ts";
 import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
 import { MAX_EXTRA_PATHS, MAX_TOOLSETS, checkPatterns, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
@@ -56,34 +57,6 @@ interface ToolEnv {
 
 function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-function onOff(value: boolean): string {
-	return value ? "on" : "off";
-}
-
-/** One-line summary for the footer status. */
-export function statusLine(state: PermissionsState): string {
-	const on = state.toolsets.filter((toolset) => toolset.enabled).length;
-	const sandboxes = SANDBOXES.filter((sandbox) => state.sandboxes[sandbox.key]).length;
-	return `toolsets:${on}/${state.toolsets.length} sandboxes:${sandboxes}/${SANDBOXES.length} ${state.scope}`;
-}
-
-/** Compact text report of the current state. */
-export function statusText(state: PermissionsState): string {
-	const lines = [`toolsets (${state.toolsets.length}):`];
-	for (const toolset of state.toolsets) {
-		const marker = toolset.builtin ? "builtin" : "custom";
-		lines.push(`  ${toolset.name} ${onOff(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
-	}
-	lines.push(
-		`sandboxes: readonly_bash=${onOff(state.sandboxes.readonly_bash)} no_network=${onOff(state.sandboxes.no_network)}`,
-	);
-	lines.push(`scope: ${state.scope}`);
-	lines.push(
-		`paths: ${state.extra_paths.length === 0 ? "the project root only" : state.extra_paths.join(", ")}`,
-	);
-	return lines.join("\n");
 }
 
 function declined(): ToolOutcome {

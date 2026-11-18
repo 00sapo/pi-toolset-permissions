@@ -6,18 +6,32 @@ import { IsolatedRunner } from "./isolated-runner.ts";
 import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
 import { openPermissions } from "./ui.ts";
-import { foreignTools, layerKey, layersActive } from "./layers.ts";
+import { statusLine } from "./status.ts";
+import { foreignTools, layerKey, layersActive, ownPaths } from "./layers.ts";
 import type { SandboxLayers } from "./layers.ts";
 
 /**
- * Opt-in entry point. Every built-in tool name becomes a delegate. With no layer the delegate
+ * Isolated entry point. Every built-in tool name becomes a delegate. With no layer the delegate
  * calls the host implementation. With a layer on it calls an isolated Pi, so a call never
  * reaches the host filesystem or network while a layer is on.
+ *
+ * `registerPermissionsCommand` is false when the caller already registers `/permissions`.
  */
 export default function isolatedExtension(pi: ExtensionAPI): void {
+	install(pi, { registerPermissionsCommand: true });
+}
+
+export interface IsolatedOptions {
+	/** True when this module also owns the `/permissions` command. */
+	registerPermissionsCommand: boolean;
+}
+
+/** The executor, without the entry-point decision. The default extension calls it on Linux. */
+export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	if (process.env.PI_TOOLSET_INNER === "1") throw new Error("The isolated entry point cannot load inside its own child.");
 	const store = new StateStore();
-	const ownPath = fileURLToPath(import.meta.url);
+	// Every file of this extension. A tool registered by index.ts or isolated.ts is our own code.
+	const ownPath = ownPaths(fileURLToPath(import.meta.url));
 	let runner: IsolatedRunner | undefined;
 	let runnerKey: string | undefined;
 	let starting: Promise<void> | undefined;
@@ -39,9 +53,12 @@ export default function isolatedExtension(pi: ExtensionAPI): void {
 		return value as string[];
 	}
 
+	/** The footer names the layers, their depth, and their platform limit. */
 	function status(text: string | undefined): void {
 		try {
-			currentContext?.ui.setStatus("isolated", text);
+			const context = currentContext;
+			if (!context) return;
+			context.ui.setStatus("isolated", text ?? statusLine(store.get(), "all-tools"));
 		} catch {
 			// The footer is cosmetic.
 		}
@@ -143,22 +160,24 @@ export default function isolatedExtension(pi: ExtensionAPI): void {
 	}
 
 	// The layer screen. A change calls the store listener above, which restarts the process.
-	pi.registerCommand("permissions", {
-		description: "Tool permissions, scope, and sandbox layers",
-		handler: async (_args, ctx) => {
-			currentContext = ctx;
-			try {
-				store.reload();
-			} catch {
-				// Keep the state loaded at startup.
-			}
-			try {
-				await openPermissions(store, ctx, pi.getAllTools().map((tool) => tool.name));
-			} catch (error) {
-				if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
-			}
-		},
-	});
+	if (options.registerPermissionsCommand) {
+		pi.registerCommand("permissions", {
+			description: "Tool permissions, scope, and sandbox layers",
+			handler: async (_args, ctx) => {
+				currentContext = ctx;
+				try {
+					store.reload();
+				} catch {
+					// Keep the state loaded at startup.
+				}
+				try {
+					await openPermissions(store, ctx, pi.getAllTools().map((tool) => tool.name), "all-tools");
+				} catch (error) {
+					if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
+				}
+			},
+		});
+	}
 
 	function messageOf(error: unknown): string {
 		return error instanceof Error ? error.message : String(error);

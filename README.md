@@ -28,7 +28,7 @@ pi -e npm:pi-toolset-permissions
 
 Then open the screen with `/permissions`.
 
-An optional [isolated executor prototype](docs/ISOLATED.md) delegates tool execution to a sandboxed Pi process without a second model. It uses a separate entry point, does not change the default behavior, and runs on Linux only.
+On Linux, this extension delegates tool execution to a sandboxed Pi process, so every tool runs inside the boundary. On macOS it wraps `bash` only. On Windows no backend exists, and the screen says to start Pi inside WSL2. [Isolated executor](docs/ISOLATED.md) describes the boundary.
 
 ## Main features
 
@@ -192,27 +192,35 @@ The project root cannot be removed. The extension saves the resolved path, so a 
 
 The screen lists two sandboxes.
 
-Press space to turn the selected sandbox on or off. The change applies to the next bash call.
+Press space to turn the selected sandbox on or off.
 
-A sandbox starts the bash call inside an operating-system boundary. It does not read the command text.
+The sandbox means a different thing on each system.
 
-The read-only filesystem sandbox makes the filesystem read-only. Every write fails, including writes to `/tmp`.
+| System | Entry point | What the sandbox covers |
+|---|---|---|
+| Linux | This extension, which uses the isolated executor | Every tool. No tool runs on the host while a layer is on. |
+| macOS | This extension | `bash` only. Turn every other toolset off, because the other tools run on the host. |
+| Windows | None | Nothing. The layers are disabled and the screen says to start Pi inside WSL2. |
 
-- On Linux, the sandbox uses `bwrap` from bubblewrap with a read-only bind of the root.
-- On macOS, the sandbox uses `sandbox-exec` with a Seatbelt profile. The profile denies `file-write*` and allows writes to the standard devices only.
+On Linux the extension hands the tool set to the isolated executor in `docs/ISOLATED.md`. That executor runs every tool in a separate Pi process inside a bubblewrap sandbox. It needs `bwrap`.
+
+On macOS the extension wraps `bash` with `sandbox-exec`. The other tools are not covered, so the screen asks for confirmation before a layer starts.
+
+On Windows a layer that a saved file still holds is turned off at startup, so a shell call never fails because of a stale setting.
+
+A sandbox does not read the command text.
+
+The read-only sandbox makes the filesystem read-only. On Linux the sandbox covers every tool, so every write fails, including writes to `/tmp`.
 
 The no-network sandbox removes network access. Name resolution also fails.
 
-- On Linux, the sandbox uses a separate network namespace. It needs `bwrap`, or `unshare` from util-linux.
-- On macOS, the Seatbelt profile adds `(deny network*)`.
-
 You can turn on both sandboxes at once.
 
-If a program that a sandbox needs is missing, the bash call fails with a message. The call never starts without the sandbox.
+If a program that a sandbox needs is missing, the tool call fails with a message. The call never starts without the sandbox.
 
-A sandbox does not change a toolset, and a toolset does not change a sandbox. Turn on the read-only sandbox when bash must not change files.
+A sandbox does not change a toolset, and a toolset does not change a sandbox. Turn on the read-only sandbox when a tool must not change files.
 
-Commands that you type with `!` are not sandboxed. A sandbox covers only the shell tools that the model calls.
+Commands that you type with `!` are not sandboxed. A sandbox covers only the tools that the model calls.
 
 ## The permissions tool
 
