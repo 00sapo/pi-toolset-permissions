@@ -42,7 +42,7 @@ test("defaults match the sketch", () => {
 			["read", true, true],
 			["write", false, true],
 			["execute", true, true],
-			["permission", true, true],
+			["permissions", true, true],
 		],
 	);
 });
@@ -92,7 +92,7 @@ test("mergeState drops a toolset with an invalid regex", () => {
 	});
 	assert.deepEqual(
 		state.toolsets.map((toolset) => toolset.name),
-		["read", "write", "execute", "permission", "good"],
+		["read", "write", "execute", "permissions", "good"],
 	);
 });
 
@@ -159,15 +159,42 @@ test("mergeState keeps a shipped toolset toggle", () => {
 	assert.equal(byName.get("write")?.enabled, true);
 });
 
-test("mergeState lets the file turn the permission toolset off", () => {
+test("mergeState lets the file turn the permissions toolset off", () => {
 	const state = mergeState({
-		toolsets: [{ name: "permission", patterns: ["^nothing$"], enabled: false, builtin: true }],
+		toolsets: [{ name: "permissions", patterns: ["^nothing$"], enabled: false, builtin: true }],
 	});
-	const permission = state.toolsets.find((toolset) => toolset.name === "permission");
+	const permission = state.toolsets.find((toolset) => toolset.name === "permissions");
 	assert.ok(permission);
 	assert.equal(permission.enabled, false);
 	assert.deepEqual(permission.patterns, ["^nothing$"]);
 });
+
+for (const enabled of [false, "ask"] as const) {
+	test(`mergeState migrates legacy permission with mode ${enabled} and edited patterns`, () => {
+		const patterns = ["^permissions$", "^legacy_permission_action$"];
+		const state = mergeState({
+			toolsets: [{ name: "permission", patterns, enabled, builtin: true }],
+		});
+		assert.deepEqual(state.toolsets.find((toolset) => toolset.name === "permissions"), {
+			name: "permissions", patterns, enabled, builtin: true,
+		});
+		assert.equal(state.toolsets.some((toolset) => toolset.name === "permission"), false);
+		assert.equal(state.toolsets.filter((toolset) => toolset.name === "permissions").length, 1);
+		assert.equal(state.toolsets.length, 4);
+	});
+}
+
+for (const legacyFirst of [false, true]) {
+	test(`mergeState prefers canonical permissions with legacyFirst=${legacyFirst}`, () => {
+		const canonical = { name: "permissions", patterns: ["^canonical$"], enabled: "ask", builtin: true };
+		const legacy = { name: "permission", patterns: ["^legacy$"], enabled: false, builtin: true };
+		const state = mergeState({ toolsets: legacyFirst ? [legacy, canonical] : [canonical, legacy] });
+		assert.deepEqual(state.toolsets.find((toolset) => toolset.name === "permissions"), canonical);
+		assert.equal(state.toolsets.some((toolset) => toolset.name === "permission"), false);
+		assert.equal(state.toolsets.filter((toolset) => toolset.name === "permissions").length, 1);
+		assert.equal(state.toolsets.length, 4);
+	});
+}
 
 test("mergeState defaults a custom toolset to enabled", () => {
 	const state = mergeState({ toolsets: [{ name: "custom", patterns: ["^custom$"] }] });
@@ -381,4 +408,25 @@ test("update rebases on the file so two stores keep both changes", () => {
 		assert.deepEqual(reloaded.get().extra_paths, ["/tmp/one"]);
 		assert.equal(reloaded.get().scope, "everywhere");
 	});
+});
+
+test("version 2 persists all three modes for builtin and custom toolsets", () => {
+	withTempDir((dir) => {
+		const file = join(dir, "permissions.json");
+		const state = defaultState();
+		state.toolsets[0].enabled = "ask";
+		for (const enabled of [false, true, "ask"] as const) {
+			state.toolsets.push({ name: `custom-${enabled}`, enabled, patterns: ["^custom$"], builtin: false });
+		}
+		saveState(state, file);
+		assert.deepEqual(loadState(file), state);
+		const store = new StateStore(file);
+		assert.equal(store.update((current) => current).toolsets[0].enabled, "ask");
+		assert.equal(loadState(file).version, 2);
+	});
+});
+
+test("version 2 boolean states retain their modes", () => {
+	const state = defaultState();
+	assert.deepEqual(mergeState(JSON.parse(JSON.stringify(state))), state);
 });

@@ -43,9 +43,9 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[
 		],
 	},
 	{
-		// The permission toolset holds the permissions tool. It is a normal toolset, so the
+		// The permissions toolset holds the permissions tool. It is a normal toolset, so the
 		// model and the screen can turn it off.
-		name: "permission",
+		name: "permissions",
 		enabled: true,
 		patterns: ["^permissions$"],
 	},
@@ -134,7 +134,7 @@ function readToolset(entry: unknown): Toolset | null {
 	const checked = checkPatterns(entry.patterns);
 	if ("error" in checked) return null;
 
-	return { name, patterns: checked.patterns, enabled: entry.enabled !== false, builtin: false };
+	return { name, patterns: checked.patterns, enabled: entry.enabled === "ask" ? "ask" : entry.enabled !== false, builtin: false };
 }
 
 /** Reads the stored toolsets in file order. A duplicate name keeps the first entry. */
@@ -157,6 +157,12 @@ export function mergeState(raw: unknown): PermissionsState {
 	const defaults = defaultState();
 	const source: Record<string, unknown> = isRecord(raw) ? raw : {};
 	const stored = readStoredToolsets(source.toolsets);
+	// Migrate the old builtin name without changing its mode or patterns.
+	const legacy = stored.get("permission");
+	if (legacy !== undefined) {
+		if (!stored.has("permissions")) stored.set("permissions", { ...legacy, name: "permissions" });
+		stored.delete("permission");
+	}
 
 	// A shipped toolset keeps its name and its builtin mark. The file sets the on/off
 	// state and the pattern list, so a user can tune the default patterns.

@@ -46,7 +46,7 @@ const SHIPPED: Array<[string, string]> = [
 	["bash_run", "execute"],
 	["shell_exec", "execute"],
 	["task_bash", "execute"],
-	["permissions", "permission"],
+	["permissions", "permissions"],
 ];
 
 for (const [name, toolset] of SHIPPED) {
@@ -129,4 +129,19 @@ test("two toolsets can match the same tool", () => {
 		{ name: "mcp-b", patterns: ["^mcp__foo_"], enabled: true, builtin: false },
 	];
 	assert.deepEqual(names("mcp__foo__bar", toolsets), ["mcp-a", "mcp-b"]);
+});
+
+test("classification includes ask and excludes disabled matches", () => {
+	const toolsets: Toolset[] = [
+		{ name: "off", patterns: ["^foo$"], enabled: false, builtin: false },
+		{ name: "ask-first", patterns: ["^foo$"], enabled: "ask", builtin: false },
+		{ name: "ask-second", patterns: ["^foo$"], enabled: "ask", builtin: false },
+	];
+	assert.deepEqual(classify("foo", toolsets), {
+		toolsets: ["ask-first", "ask-second"], mode: "ask", askToolsets: ["ask-first", "ask-second"],
+	});
+	const on: Toolset = { name: "on", patterns: ["^foo$"], enabled: true, builtin: false };
+	for (const overlapping of [[on, ...toolsets], [...toolsets, on]]) {
+		assert.equal(classify("foo", overlapping)?.mode, "on");
+	}
 });
