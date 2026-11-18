@@ -25,6 +25,7 @@ function mockContext(cwd: string, answer: string | undefined = "Allow once", fee
 	const ctx = {
 		cwd,
 		hasUI: true,
+		mode: "tui",
 		ui: {
 			async select(title: string, choices: string[]) {
 				selections.push({ title, choices });
@@ -71,6 +72,25 @@ function customContext(cwd: string, keys: string[], feedback?: string, rows?: nu
 		lifecycle: () => ({ renders, invalidated, completions }),
 	};
 }
+
+	test("a non-terminal session uses the select dialog, not custom", async (t) => {
+	const { cwd, store, approvals } = fixture(t);
+	const { ctx, selections } = mockContext(cwd);
+	// RPC mode defines custom() and returns undefined. A truthiness check would
+	// read that as a denial and skip the dialog.
+	let customCalls = 0;
+	(ctx as { mode?: string }).mode = "rpc";
+	Object.assign(ctx.ui, {
+		custom: async () => {
+			customCalls += 1;
+			return undefined;
+		},
+	});
+	assert.match(await approvals.request(store, "read", { path: "file.txt" }, reason, ctx), /Approved once/);
+	assert.equal(customCalls, 0);
+	assert.equal(selections.length, 1);
+	assert.deepEqual(selections[0].choices, ["Allow once", "Deny", "Deny with explanation", "Allow and enable toolset read"]);
+});
 
 const reason = "Read the requested project file.";
 

@@ -6,6 +6,8 @@ import type { StateStore } from "./state.ts";
 interface ApprovalUI {
 	hasUI: boolean;
 	cwd: string;
+	/** "tui", "rpc", "json", or "print". */
+	mode?: string;
 	ui: {
 		custom?: ExtensionContext["ui"]["custom"];
 		select(title: string, choices: string[]): Promise<string | undefined>;
@@ -47,7 +49,10 @@ export class Approvals {
 		if (!names?.length) return "Blocked: no ask toolset was identified.";
 		const choices = approvalChoices(names);
 		const details = { tool, input, reason, names };
-		const answer = ctx.ui.custom ? await ctx.ui.custom<string | undefined>((tui, theme, keys, done) => {
+		// RPC mode defines custom() but returns undefined, which a truthiness check
+		// reads as a denial. Use it only where a terminal exists.
+		const terminal = ctx.mode === "tui" && ctx.ui.custom !== undefined;
+		const answer = terminal ? await ctx.ui.custom<string | undefined>((tui, theme, keys, done) => {
 			let selected = 0;
 			let inspecting = false;
 			let offset = 0;
