@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { PermissionsState, SandboxFlags, ScopeMode, Toolset } from "./types.ts";
+import { allowsAsk } from "./types.ts";
 
 export const MAX_EXTRA_PATHS = 100;
 export const MAX_TOOLSETS = 50;
@@ -125,6 +126,11 @@ function readExtraPaths(value: unknown): string[] {
 	return result;
 }
 
+/** A stored mode, with ask refused for a toolset that supports only on and off. */
+function readMode(name: string, value: unknown): boolean | "ask" {
+	return value === "ask" && allowsAsk(name) ? "ask" : value !== false;
+}
+
 function readToolset(entry: unknown): Toolset | null {
 	if (!isRecord(entry)) return null;
 	const name = typeof entry.name === "string" ? entry.name.trim() : "";
@@ -134,7 +140,7 @@ function readToolset(entry: unknown): Toolset | null {
 	const checked = checkPatterns(entry.patterns);
 	if ("error" in checked) return null;
 
-	return { name, patterns: checked.patterns, enabled: entry.enabled === "ask" ? "ask" : entry.enabled !== false, builtin: false };
+	return { name, patterns: checked.patterns, enabled: readMode(name, entry.enabled), builtin: false };
 }
 
 /** Reads the stored toolsets in file order. A duplicate name keeps the first entry. */

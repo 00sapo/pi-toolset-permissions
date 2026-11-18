@@ -169,7 +169,7 @@ test("mergeState lets the file turn the permissions toolset off", () => {
 	assert.deepEqual(permission.patterns, ["^nothing$"]);
 });
 
-for (const enabled of [false, "ask"] as const) {
+for (const enabled of [false, true] as const) {
 	test(`mergeState migrates legacy permission with mode ${enabled} and edited patterns`, () => {
 		const patterns = ["^permissions$", "^legacy_permission_action$"];
 		const state = mergeState({
@@ -186,7 +186,7 @@ for (const enabled of [false, "ask"] as const) {
 
 for (const legacyFirst of [false, true]) {
 	test(`mergeState prefers canonical permissions with legacyFirst=${legacyFirst}`, () => {
-		const canonical = { name: "permissions", patterns: ["^canonical$"], enabled: "ask", builtin: true };
+		const canonical = { name: "permissions", patterns: ["^canonical$"], enabled: true, builtin: true };
 		const legacy = { name: "permission", patterns: ["^legacy$"], enabled: false, builtin: true };
 		const state = mergeState({ toolsets: legacyFirst ? [legacy, canonical] : [canonical, legacy] });
 		assert.deepEqual(state.toolsets.find((toolset) => toolset.name === "permissions"), canonical);
