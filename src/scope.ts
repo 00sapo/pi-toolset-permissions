@@ -35,6 +35,16 @@ export function canonicalPath(value: string): string {
 	}
 }
 
+/** Pure string containment, with no link resolution. */
+function isInsideLexical(root: string, target: string): boolean {
+	const absoluteRoot = resolve(root);
+	const absoluteTarget = resolve(target);
+	if (absoluteRoot === absoluteTarget) return true;
+	const rest = relative(absoluteRoot, absoluteTarget);
+	if (rest === "" || rest === ".." || isAbsolute(rest)) return false;
+	return !rest.startsWith(`..${sep}`);
+}
+
 export function isInside(root: string, target: string): boolean {
 	const canonicalRoot = canonicalPath(root);
 	const canonicalTarget = canonicalPath(target);
@@ -46,6 +56,9 @@ export function isInside(root: string, target: string): boolean {
 
 export function isAllowedPath(state: PermissionsState, cwd: string, value: string): boolean {
 	if (state.scope === "everywhere") return true;
+	// A normalized path inside the project is allowed before link resolution, so a
+	// link in the project can reach its target. The link itself is the project path.
+	if (isInsideLexical(cwd, resolvePath(cwd, value))) return true;
 	const target = canonicalPath(resolvePath(cwd, value));
 	if (isInside(cwd, target)) return true;
 	return state.extra_paths.some((entry) => isInside(entry, target));
