@@ -1,6 +1,6 @@
 // Standalone entry point. The launcher references this file by URL and never imports it.
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import type { Socket } from "node:net";
 import { isAbsolute, join } from "node:path";
@@ -13,7 +13,24 @@ async function main(): Promise<void> {
   throw new Error("The inner relay requires the isolated launcher environment and an absolute Pi executable path.");
  }
  // /tmp belongs to the namespace. Never write authentication to the host agent directory.
- const agentDir = await mkdtemp("/tmp/pi-bridge-agent-");
+ const configuredAgentDir = process.env.PI_CODING_AGENT_DIR;
+ const agentDir = configuredAgentDir && configuredAgentDir !== "/run/pi-agent"
+  ? configuredAgentDir
+  : await mkdtemp("/tmp/pi-bridge-agent-");
+ await mkdir(agentDir, { recursive: true });
+ // PATH names only sandbox paths. Link the programs instead of naming their host directories.
+ await mkdir("/run/pi-bin", { recursive: true });
+ await Promise.all([
+  symlink(pi, "/run/pi-bin/pi").catch(() => {}),
+  symlink(process.execPath, "/run/pi-bin/node").catch(() => {}),
+ ]);
+ // A minimal account database. The host users and their home paths stay outside the sandbox.
+ const uid = process.getuid?.() ?? 1000;
+ const gid = process.getgid?.() ?? 1000;
+ await Promise.all([
+  writeFile("/etc/passwd", `pi:x:${uid}:${gid}:Sandboxed user:/tmp/home:/bin/sh\n`, { mode: 0o444 }).catch(() => {}),
+  writeFile("/etc/group", `pi:x:${gid}:\n`, { mode: 0o444 }).catch(() => {}),
+ ]);
  const sockets = new Set<Socket>();
  const server = createServer({ allowHalfOpen: true }, (client) => {
   const upstream = createConnection({ path: socketPath, allowHalfOpen: true });
@@ -52,6 +69,7 @@ async function main(): Promise<void> {
   }), { mode: 0o600 });
   const env: Record<string, string> = {
    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/tmp",
+   HOSTNAME: process.env.HOSTNAME ?? "sandbox",
    LANG: process.env.LANG ?? "C.UTF-8", TERM: process.env.TERM ?? "dumb",
    PI_TOOLSET_INNER: "1", PI_BRIDGE_SOCKET: socketPath, PI_BRIDGE_TOKEN: token,
    PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0",
