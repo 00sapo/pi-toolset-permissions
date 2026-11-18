@@ -266,6 +266,8 @@ The layer needs the project scope. When you set the scope to everywhere, the ext
 
 Pi keeps a small set of runtime paths in every state: its own agent directory, its private temporary directory, the programs that run it, and the system directories that programs read. Those paths stay writable where Pi needs them, so a session and its configuration keep working.
 
+The rules, the agent definitions, the extensions, the skills, the prompts, the themes, and the npm packages of the Pi agent directory are readable inside the sandbox. So are the settings, the subagent settings, the model aliases, and the system prompt files. Each entry is mounted read-only, because an extension that runs inside the sandbox reads them. The saved credentials, the model store, the trust file, the sessions, and the state directory stay outside.
+
 A write outside the roots can report success inside the sandbox and still never reach the host. Make sure that the host file is the one you check.
 
 The no-network sandbox removes network access. Name resolution also fails.
