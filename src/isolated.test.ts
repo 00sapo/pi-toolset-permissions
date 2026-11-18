@@ -50,6 +50,15 @@ test("third-party extensions are reported and built-ins are not", () => {
 	assert.deepEqual(names, ["/ext/hypa.ts"]);
 });
 
+test("an extension that registers several tools is named once", () => {
+	const names = foreignTools("/ext/own.ts", [
+		{ name: "hypa_shell", sourceInfo: { source: "local", path: "/ext/hypa.ts" } },
+		{ name: "hypa_read", sourceInfo: { source: "local", path: "/ext/hypa.ts" } },
+		{ name: "delegate", sourceInfo: { source: "local", path: "/ext/own.ts" } },
+	]);
+	assert.deepEqual(names, ["/ext/hypa.ts"]);
+});
+
 test("a tool registered by any file of this extension is own code", () => {
 	const paths = ownPaths("/ext/src/isolated.ts");
 	assert.deepEqual(paths, ["/ext/src/isolated.ts", "/ext/src/index.ts"]);

@@ -35,9 +35,11 @@ export function foreignTools(
 	ownPath: string | readonly string[],
 	tools: Array<{ name: string; sourceInfo: { source?: string; path?: string } }>,
 ): string[] {
-	return tools
+	// One extension can register several tools. The path is what the user must move, so it
+	// appears once.
+	return [...new Set(tools
 		.filter((tool) => tool.sourceInfo.source !== "builtin" && !isOwnTool(ownPath, tool))
-		.map((tool) => tool.sourceInfo.path ?? tool.name);
+		.map((tool) => tool.sourceInfo.path ?? tool.name))];
 }
 
 /**
