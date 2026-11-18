@@ -3,6 +3,7 @@
 import { SANDBOXES } from "./sandboxes.ts";
 import { platformPolicy, requiresBashOnly } from "./platform.ts";
 import type { SandboxTarget } from "./sandbox-scope.ts";
+import { toolsetMode } from "./types.ts";
 import type { PermissionsState } from "./types.ts";
 
 function onOff(value: boolean): string {
@@ -18,8 +19,9 @@ export function statusLine(
 	target: SandboxTarget = "bash",
 	platform: NodeJS.Platform = process.platform,
 ): string {
-	const on = state.toolsets.filter((toolset) => toolset.enabled).length;
-	const head = `toolsets:${on}/${state.toolsets.length}`;
+	const on = state.toolsets.filter((toolset) => toolset.enabled === true).length;
+	const ask = state.toolsets.filter((toolset) => toolset.enabled === "ask").length;
+	const head = `toolsets: ${on} on ${ask} ask ${state.toolsets.length - on - ask} off`;
 	const policy = platformPolicy(platform);
 	if (policy.plan === "disabled") return `${head} sandbox:disabled ${state.scope}`;
 	const active = SANDBOXES.filter((sandbox) => state.sandboxes[sandbox.key]).length;
@@ -38,7 +40,7 @@ export function statusText(
 	const lines = [`toolsets (${state.toolsets.length}):`];
 	for (const toolset of state.toolsets) {
 		const marker = toolset.builtin ? "builtin" : "custom";
-		lines.push(`  ${toolset.name} ${onOff(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
+		lines.push(`  ${toolset.name} ${toolsetMode(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
 	}
 	lines.push(
 		`sandboxes: readonly_bash=${onOff(state.sandboxes.readonly_bash)} no_network=${onOff(state.sandboxes.no_network)}`,

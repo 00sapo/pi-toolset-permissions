@@ -40,7 +40,7 @@ function stateWith(mutate: (state: PermissionsState) => void = () => {}): Permis
 	return state;
 }
 
-function setToolset(state: PermissionsState, name: string, enabled: boolean): void {
+function setToolset(state: PermissionsState, name: string, enabled: boolean | "ask"): void {
 	for (const toolset of state.toolsets) {
 		if (toolset.name === name) toolset.enabled = enabled;
 	}
@@ -52,10 +52,10 @@ function reasonOf(decision: GateDecision): string {
 	return decision.reason;
 }
 
-test("the permission toolset is a normal builtin toolset", () => {
+test("the permissions toolset is a normal builtin toolset", () => {
 	withWorkspace((space) => {
 		const state = stateWith();
-		const toolset = state.toolsets.find((entry) => entry.name === "permission");
+		const toolset = state.toolsets.find((entry) => entry.name === "permissions");
 		assert.ok(toolset);
 		assert.equal(toolset.builtin, true);
 		assert.equal(toolset.enabled, true);
@@ -64,13 +64,13 @@ test("the permission toolset is a normal builtin toolset", () => {
 	});
 });
 
-test("the permissions tool is blocked when the permission toolset is off", () => {
+test("the permissions tool is blocked when the permissions toolset is off", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
 			for (const toolset of current.toolsets) toolset.enabled = false;
 		});
 		const reason = reasonOf(evaluateCall(state, "permissions", {}, space.project));
-		assert.ok(reason.includes("no toolset"));
+		assert.ok(reason.includes("disabled toolsets"));
 	});
 });
 
@@ -91,7 +91,7 @@ test("the default state blocks write tools because the write toolset is off", ()
 		const state = stateWith();
 		for (const toolName of ["write", "edit"]) {
 			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
-			assert.ok(reason.includes("no toolset"));
+			assert.ok(reason.includes("disabled toolsets"));
 			assert.ok(reason.includes(`"${toolName}"`));
 		}
 	});
@@ -113,7 +113,7 @@ test("the execute toolset off blocks bash and codemode", () => {
 			{ toolName: "codemode", input: {} },
 		]) {
 			const reason = reasonOf(evaluateCall(state, call.toolName, call.input, space.project));
-			assert.ok(reason.includes("no toolset"));
+			assert.ok(reason.includes("disabled toolsets"));
 		}
 	});
 });
@@ -123,7 +123,7 @@ test("the read toolset off blocks the read tools but not bash", () => {
 		const state = stateWith((current) => setToolset(current, "read", false));
 		for (const toolName of ["read", "grep", "find", "ls"]) {
 			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
-			assert.ok(reason.includes("no toolset"));
+			assert.ok(reason.includes("disabled toolsets"));
 		}
 		assert.equal(evaluateCall(state, "bash", { command: "ls" }, space.project).block, false);
 	});
@@ -297,5 +297,62 @@ test("the gate does not inspect bash commands when a sandbox is on", () => {
 		});
 		assert.equal(evaluateCall(state, "bash", { command: "ls | xargs curl http://x" }, space.project).block, false);
 		assert.equal(evaluateCall(state, "bash", { command: "rm -rf /" }, space.project).block, false);
+	});
+});
+
+test("ask blocks with toolset names and approval instructions", () => {
+	const state = stateWith((current) => setToolset(current, "read", "ask"));
+	const decision = evaluateCall(state, "read", { path: "file.txt" }, process.cwd());
+	assert.equal(decision.block, true);
+	if (!decision.block) return;
+	assert.equal(decision.kind, "ask");
+	assert.deepEqual(decision.toolsets, ["read"]);
+	assert.equal(decision.reason, 'Approval required: explain the action and reason. The user approval resumes this call.');
+	state.toolsets.push({ name: "overlap", patterns: ["^read$"], enabled: true, builtin: false });
+	assert.deepEqual(evaluateCall(state, "read", {}, process.cwd()), { block: false });
+});
+
+test("scope precedes ask, disabled, and unknown decisions", () => {
+	withWorkspace((space) => {
+		for (const enabled of [false, "ask", true] as const) {
+			const state = stateWith((current) => setToolset(current, "read", enabled));
+			for (const tool of ["read", "unknown_tool"]) {
+				const decision = evaluateCall(state, tool, { paths: ["file.txt", join(space.outside, "secret.txt")] }, space.project);
+				assert.equal(decision.block && decision.kind, "scope");
+			}
+		}
+	});
+});
+
+test("known disabled tools never produce an unknown decision", () => {
+	const state = defaultState();
+	const decision = evaluateCall(state, "write", {}, process.cwd());
+	assert.equal(decision.block && decision.kind, "disabled");
+	assert.match(reasonOf(decision), /set_toolset/);
+	for (const enabled of [false, "ask"] as const) {
+		setToolset(state, "permissions", enabled);
+		const reason = reasonOf(evaluateCall(state, "write", {}, process.cwd()));
+		assert.match(reason, /\/permissions/);
+		assert.doesNotMatch(reason, /set_toolset/);
+	}
+});
+
+test("only the permissions request_tool action bypasses toolset modes", () => {
+	withWorkspace((space) => {
+		for (const enabled of [false, "ask", true] as const) {
+			const state = stateWith((current) => {
+				for (const toolset of current.toolsets) toolset.enabled = enabled;
+			});
+			const input = { action: "request_tool", tool: "read", input: { path: join(space.outside, "secret.txt") }, reason: "Read target" };
+			assert.deepEqual(evaluateCall(state, "permissions", input, space.project), { block: false });
+			const target = evaluateCall(state, "read", input.input, space.project);
+			assert.equal(target.block && target.kind, "scope");
+			if (enabled !== true) {
+				for (const action of [undefined, "set_toolset", "request_tool_extra"]) {
+					assert.equal(evaluateCall(state, "permissions", { action }, space.project).block, true);
+				}
+				assert.equal(evaluateCall(state, "write", { action: "request_tool" }, space.project).block, true);
+			}
+		}
 	});
 });

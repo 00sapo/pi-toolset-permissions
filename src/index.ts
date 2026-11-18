@@ -1,8 +1,10 @@
 /** Wiring: state, the tool_call gate, the /permissions command, and the footer status. */
 
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createBashTool, createPowerShellTool } from "@earendil-works/pi-coding-agent";
 import { evaluateCall } from "./gate.ts";
+import { Approvals } from "./approval.ts";
 import { wrapBash } from "./sandboxes.ts";
 import { MAX_TOOLSETS, StateStore } from "./state.ts";
 import { registerPermissionsTool } from "./tool.ts";
@@ -11,6 +13,7 @@ import type { Toolset } from "./types.ts";
 import { openPermissions } from "./ui.ts";
 import { install } from "./isolated.ts";
 import { layersEnabled, platformPolicy } from "./platform.ts";
+import { callReason } from "./reason.ts";
 
 const LOADED = Symbol.for("pi-toolset-permissions.loaded");
 const MAX_REASON = 240;
@@ -28,6 +31,14 @@ function escapeRegex(value: string): string {
 function clipReason(reason: string): string {
 	if (reason.length <= MAX_REASON) return reason;
 	return `${reason.slice(0, MAX_REASON - 3)}...`;
+}
+
+function approvalReason(ctx: ExtensionContext, tool: string, input: Record<string, unknown>): string {
+	try {
+		return callReason(ctx.sessionManager.getBranch(), tool, input);
+	} catch {
+		return callReason([], tool, input);
+	}
 }
 
 function toolsetName(store: StateStore, toolName: string): string {
@@ -98,6 +109,14 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 
 	try {
 		const store = new StateStore();
+		const approvals = new Approvals();
+		// A host can deliver the same preflight event more than once. Bind a consumed
+		// grant to that call ID, never to a later call with identical arguments.
+		const authorizedCalls = new Map<string, { tool: string; input: Record<string, unknown> }>();
+		const clearApprovals = (): void => {
+			approvals.clear();
+			authorizedCalls.clear();
+		};
 		let activeCtx: ExtensionContext | undefined;
 
 		const publish = (ctx: ExtensionContext): void => {
@@ -110,10 +129,11 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 
 		// Every change, from the tool or from the screen, refreshes the footer.
 		store.onChange(() => {
+			clearApprovals();
 			if (activeCtx !== undefined) publish(activeCtx);
 		});
 
-		registerPermissionsTool(pi, store, publish);
+		registerPermissionsTool(pi, store, publish, approvals);
 
 		// Bash is one tool. When a sandbox is on, run the command inside the OS boundary.
 		const bashDefinition = createBashTool(process.cwd());
@@ -183,8 +203,37 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		pi.on("tool_call", async (event, ctx) => {
 			const input = event.input as unknown as Record<string, unknown>;
 			try {
+				store.reload();
 				const first = evaluateCall(store.get(), event.toolName, input, ctx.cwd);
 				if (!first.block) return undefined;
+				if (first.kind === "ask") {
+					const prior = authorizedCalls.get(event.toolCallId);
+					if (prior !== undefined && prior.tool === event.toolName && isDeepStrictEqual(prior.input, input)) {
+						return undefined;
+					}
+					const bindApproval = (): void => {
+						if (typeof event.toolCallId === "string") {
+							if (authorizedCalls.size >= 256) authorizedCalls.delete(authorizedCalls.keys().next().value!);
+							authorizedCalls.set(event.toolCallId, { tool: event.toolName, input: structuredClone(input) });
+						}
+					};
+					if (approvals.consume(event.toolName, input)) {
+						bindApproval();
+						return undefined;
+					}
+					const answer = await approvals.request(store, event.toolName, input, approvalReason(ctx, event.toolName, input), ctx);
+					store.reload();
+					const current = evaluateCall(store.get(), event.toolName, input, ctx.cwd);
+					if (current.block && current.kind !== "ask") return { block: true, reason: current.reason };
+					if (!answer.startsWith("Approved")) return { block: true, reason: answer };
+					// Enabling the toolset removes the ask decision. A one-time grant must
+					// instead be consumed and bound to this same preflight event.
+					if (!current.block) return undefined;
+					if (approvals.consume(event.toolName, input)) {
+						bindApproval();
+						return undefined;
+					}
+				}
 				if (first.kind !== "unknown") return { block: true, reason: first.reason };
 
 				const choice = await askUnknownTool(store, event.toolName, ctx);
@@ -201,7 +250,12 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 			}
 		});
 
+		pi.on("tool_result", async (event) => {
+			authorizedCalls.delete(event.toolCallId);
+		});
+
 		pi.on("session_start", async (_event, ctx) => {
+			clearApprovals();
 			activeCtx = ctx;
 			try {
 				store.reload();
@@ -231,6 +285,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 
 		pi.on("session_shutdown", async (_event, ctx) => {
 			activeCtx = undefined;
+			clearApprovals();
 			marker[LOADED] = false;
 			try {
 				ctx.ui.setStatus("permissions", undefined);

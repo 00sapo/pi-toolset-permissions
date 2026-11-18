@@ -8,11 +8,14 @@ import { statusLine, statusText } from "./status.ts";
 import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
 import { MAX_EXTRA_PATHS, MAX_TOOLSETS, checkPatterns, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
+import { toolsetMode } from "./types.ts";
+import type { Approvals } from "./approval.ts";
 
 const parameters = Type.Object({
 	action: Type.Union(
 		[
 			Type.Literal("status"),
+			Type.Literal("request_tool"),
 			Type.Literal("set_scope"),
 			Type.Literal("add_path"),
 			Type.Literal("remove_path"),
@@ -23,7 +26,11 @@ const parameters = Type.Object({
 		],
 		{ description: "Action to run. Read status first when the reason for a block is unclear." },
 	),
-	enabled: Type.Optional(Type.Boolean({ description: "New value for set_toolset and set_sandbox." })),
+	enabled: Type.Optional(Type.Boolean({ description: "Legacy on/off value for set_toolset, or value for set_sandbox." })),
+	mode: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("on"), Type.Literal("ask")], { description: "State for set_toolset. Use mode or enabled, not both." })),
+	tool: Type.Optional(Type.String({ description: "Target tool name for request_tool." })),
+	input: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Exact target arguments for request_tool." })),
+	reason: Type.Optional(Type.String({ description: "What the call does and why it is needed." })),
 	scope: Type.Optional(
 		Type.Union([Type.Literal("project"), Type.Literal("everywhere")], {
 			description: "Path scope for set_scope. everywhere removes the path check.",
@@ -190,15 +197,18 @@ async function removeToolset(env: ToolEnv): Promise<ToolOutcome> {
 
 async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 	const name = env.params.name?.trim();
-	const enabled = env.params.enabled;
+	if (env.params.mode !== undefined && env.params.enabled !== undefined) return { text: "Use mode or enabled, not both.", isError: true };
+	const mode = env.params.mode;
+	const enabled = mode === undefined ? env.params.enabled : mode === "ask" ? "ask" : mode === "on";
 	if (name === undefined || name === "") return { text: "set_toolset needs name.", isError: true };
-	if (enabled === undefined) return { text: "set_toolset needs enabled: true or false.", isError: true };
+	if (enabled === undefined) return { text: "set_toolset needs mode: off, on, or ask.", isError: true };
 	const toolset = env.store.get().toolsets.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
 	if (toolset === undefined) return { text: `No toolset is named ${name}.`, isError: true };
-	if (toolset.enabled === enabled) return { text: `The toolset ${name} is already ${enabled ? "on" : "off"}.` };
-	const title = `Turn ${enabled ? "on" : "off"} toolset ${name}?`;
-	const message = `enabled: ${onOff(toolset.enabled)} → ${onOff(enabled)}\n\n${
-		enabled ? "Its patterns match tool names again." : "Its patterns no longer match any tool."
+	if (toolset.enabled === enabled) return { text: `The toolset ${name} is already ${toolsetMode(enabled)}.` };
+	const title = `Set toolset ${name} to ${toolsetMode(enabled)}?`;
+	const message = `${toolsetMode(toolset.enabled)} → ${toolsetMode(enabled)}\n\n${
+		enabled === "ask" ? "Each call needs approval, with its action, input, and reason."
+			: enabled ? "Tools can run without a permission request." : "Tools are blocked unless another toolset allows them."
 	}`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(
@@ -207,7 +217,7 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 			...current,
 			toolsets: current.toolsets.map((candidate) => (candidate.name === toolset.name ? { ...candidate, enabled } : candidate)),
 		}),
-		`The toolset ${name} is now ${onOff(enabled)}.`,
+		`The toolset ${name} is now ${toolsetMode(enabled)}.`,
 	);
 }
 
@@ -260,6 +270,7 @@ export function registerPermissionsTool(
 	pi: ExtensionAPI,
 	store: StateStore,
 	onChanged: (ctx: ExtensionToolContext) => void,
+	approvals: Approvals,
 ): void {
 	pi.registerTool({
 		name: "permissions",
@@ -268,8 +279,8 @@ export function registerPermissionsTool(
 			"Read or change the toolsets, path scope, and bash sandboxes. Every change asks the user to confirm.",
 		promptSnippet: "Read or change toolsets, path scope, and sandboxes (asks the user to confirm)",
 		promptGuidelines: [
-			'Use permissions with action "status" when a tool call is blocked and the reason does not explain why.',
-			"Use permissions to request a permission change; the user is asked to confirm, and the change applies only after approval.",
+			'Before each ask tool call, state the action and its specific purpose, including in subagents. Call the tool directly. Approval resumes that same call.',
+			'For off tools, request set_toolset only if the permissions toolset is on. Never bypass a refusal.',
 		],
 		defaultActive: true,
 		parameters,
@@ -282,6 +293,13 @@ export function registerPermissionsTool(
 						details: {},
 						isError: true,
 					};
+				}
+				if (params.action === "request_tool") {
+					if (!params.tool || !params.input || !params.reason?.trim()) {
+						return { content: [{ type: "text", text: "request_tool needs tool, input, and reason." }], details: {}, isError: true };
+					}
+					const text = await approvals.request(store, params.tool, params.input, params.reason, ctx);
+					return { content: [{ type: "text", text }], details: {}, ...(text.startsWith("Blocked:") ? { isError: true } : {}) };
 				}
 				const outcome = await runAction(env);
 				if (outcome.isError) {

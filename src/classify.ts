@@ -27,9 +27,15 @@ function matches(toolset: Toolset, toolName: string): boolean {
 /** Returns the enabled toolsets that match a tool name, in state order. */
 export function classify(toolName: string, toolsets: Toolset[]): Classification | null {
 	const names: string[] = [];
+	const askToolsets: string[] = [];
+	let on = false;
 	for (const toolset of toolsets) {
 		if (!toolset.enabled) continue;
-		if (matches(toolset, toolName)) names.push(toolset.name);
+		if (matches(toolset, toolName)) {
+			names.push(toolset.name);
+			if (toolset.enabled === "ask") askToolsets.push(toolset.name);
+			else on = true;
+		}
 	}
-	return names.length === 0 ? null : { toolsets: names };
+	return names.length === 0 ? null : { toolsets: names, mode: on ? "on" : "ask", askToolsets };
 }

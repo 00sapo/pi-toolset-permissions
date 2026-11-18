@@ -7,7 +7,7 @@ const MAX_REASON = 240;
 /** Argument names that hold a path. */
 const PATH_KEYS = ["path", "file_path", "filePath", "file", "paths", "files"];
 
-function blocked(kind: BlockKind, reason: string): GateDecision {
+function blocked(kind: BlockKind, reason: string): Extract<GateDecision, { block: true }> {
 	if (reason.length <= MAX_REASON) return { block: true, kind, reason };
 	const head = reason.slice(0, MAX_REASON - 102);
 	const tail = reason.slice(-97);
@@ -49,13 +49,33 @@ export function evaluateCall(
 	input: Record<string, unknown>,
 	cwd: string,
 ): GateDecision {
-	// The permissions tool is a normal tool. When the permission toolset is off, the
-	// call is blocked like any other. The /permissions screen stays open.
-	const matched = classify(toolName, state.toolsets);
-	if (matched === null) return blocked("unknown", noToolsetReason(toolName));
+	// This action only requests approval. The coordinator gates the target call.
+	if (toolName === "permissions" && input.action === "request_tool") return { block: false };
 
-	for (const path of stringValues(input, PATH_KEYS)) {
-		if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
+	// A permission change reaches its own dialog, so its directory argument is not
+	// a target file path. Classification still applies below.
+	if (toolName !== "permissions") {
+		for (const path of stringValues(input, PATH_KEYS)) {
+			if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
+		}
+	}
+
+	const matched = classify(toolName, state.toolsets);
+	if (matched === null) {
+		// Include disabled patterns only to distinguish known tools from unknown tools.
+		const known = classify(toolName, state.toolsets.map((toolset) => ({ ...toolset, enabled: true })));
+		if (known === null) return blocked("unknown", noToolsetReason(toolName));
+		const permission = classify("permissions", state.toolsets);
+		const instruction = permission?.mode === "on"
+			? 'Ask the user to turn on a matching toolset with permissions action "set_toolset".'
+			: "Ask the user to turn on a matching toolset in /permissions.";
+		return blocked("disabled", `Blocked: tool "${toolName}" matches only disabled toolsets. ${instruction}`);
+	}
+	if (matched.mode === "ask") {
+		return {
+			...blocked("ask", 'Approval required: explain the action and reason. The user approval resumes this call.'),
+			toolsets: matched.askToolsets,
+		};
 	}
 
 	// Bash is one tool. The sandboxes run it inside the OS boundary.
