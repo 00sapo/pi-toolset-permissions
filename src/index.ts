@@ -11,9 +11,21 @@ import { registerPermissionsTool, statusLine } from "./tool.ts";
 import type { Toolset } from "./types.ts";
 import { openPermissions } from "./ui.ts";
 import { callReason } from "./reason.ts";
+import {
+	claimSession,
+	dropChild,
+	dropForwarder,
+	releaseSession,
+	setChild,
+	setForwarder,
+} from "./sessions.ts";
 
-const LOADED = Symbol.for("pi-toolset-permissions.loaded");
 const MAX_REASON = 240;
+const CHILD_PERMISSION_GUIDANCE =
+	'If you need a permission change, call ask_parent with the requested action, exact path or toolset, and purpose. '
+	+ 'Then end your turn and wait for the parent. The parent must call permissions and obtain user consent. '
+	+ 'Retry only after the parent reports approval. If the user refuses, stop that operation. '
+	+ 'Never use bash or another tool to bypass a block.';
 
 type UnknownChoice = "once" | "always" | "deny";
 
@@ -91,11 +103,26 @@ async function askUnknownTool(
 }
 
 export default function permissionsExtension(pi: ExtensionAPI): void {
-	// An installed copy and an explicit `-e` copy can load in the same process. The second
-	// copy would keep its own store and answer with stale state, so it does nothing.
-	const marker = globalThis as unknown as Record<symbol, boolean | undefined>;
-	if (marker[LOADED] === true) return;
-	marker[LOADED] = true;
+	// An installed copy and an explicit `-e` copy can load in the same process. A
+	// second copy in the same session would answer with stale state, so it stands
+	// down. Child sessions run in this process too, and they must each get their
+	// own gate, so the claim is per session and not per process.
+	const token = {};
+	const claimed = new Set<string>();
+	const sessionIdOf = (ctx: ExtensionContext): string => {
+		try {
+			return ctx.sessionManager?.getSessionId() ?? "";
+		} catch {
+			return "";
+		}
+	};
+	const claim = (ctx: ExtensionContext): boolean => {
+		const sessionId = sessionIdOf(ctx);
+		if (claimed.has(sessionId)) return true;
+		if (!claimSession(sessionId, token)) return false;
+		claimed.add(sessionId);
+		return true;
+	};
 
 	try {
 		const store = new StateStore();
@@ -108,6 +135,8 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 			authorizedCalls.clear();
 		};
 		let activeCtx: ExtensionContext | undefined;
+		// Set when another copy of this extension already owns this session.
+		let passive = false;
 
 		const publish = (ctx: ExtensionContext): void => {
 			try {
@@ -191,8 +220,14 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		});
 
 		pi.on("tool_call", async (event, ctx) => {
+			// Another copy of this extension already gates this session.
+			if (passive) return undefined;
 			const input = event.input as unknown as Record<string, unknown>;
 			try {
+				// These pi-subagents tools carry questions and progress only. They
+				// must stay usable even when a file or permission call is blocked.
+				if ((event.toolName === "ask_parent" || event.toolName === "notify_parent")
+					&& pi.getActiveTools().includes("ask_parent")) return undefined;
 				store.reload();
 				const first = evaluateCall(store.get(), event.toolName, input, ctx.cwd);
 				if (!first.block) return undefined;
@@ -247,27 +282,72 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		pi.on("session_start", async (_event, ctx) => {
 			clearApprovals();
 			activeCtx = ctx;
+			const sessionId = sessionIdOf(ctx);
 			try {
 				store.reload();
 			} catch {
 				// An unreadable file keeps the state that was loaded in the constructor.
 			}
+			if (!claim(ctx)) {
+				// Another copy of this extension owns this session and gates it.
+				passive = true;
+				return;
+			}
+			passive = false;
+			// A session with a UI answers its own asks and its children's asks.
+			if (ctx.hasUI) {
+				setForwarder(sessionId, async (ask) => approvals.dialog(ask.tool, ask.input, ask.reason, ask.names, {
+					hasUI: true,
+					cwd: ctx.cwd,
+					mode: ctx.mode,
+					sessionManager: ctx.sessionManager,
+					ui: ctx.ui,
+				}));
+			} else {
+				dropForwarder(sessionId);
+			}
 			publish(ctx);
 		});
 
+		// ask_parent is provided by pi-subagents. Keep its capability allowlist
+		// unchanged and teach the child how to request a policy change instead.
+		pi.on("before_agent_start", async (event, _ctx) => {
+			if (passive || !pi.getActiveTools().includes("ask_parent")) return undefined;
+			if (event.systemPrompt.includes(CHILD_PERMISSION_GUIDANCE)) return undefined;
+			return { systemPrompt: `${event.systemPrompt}\n\n${CHILD_PERMISSION_GUIDANCE}` };
+		});
+
 		pi.on("session_shutdown", async (_event, ctx) => {
+			const sessionId = sessionIdOf(ctx);
 			activeCtx = undefined;
 			clearApprovals();
-			marker[LOADED] = false;
+			dropForwarder(sessionId);
+			releaseSession(sessionId, token);
+			claimed.delete(sessionId);
 			try {
 				ctx.ui.setStatus("permissions", undefined);
 			} catch {
 				// Nothing left to clear.
 			}
 		});
+
+		// pi-subagents runs children in this process and announces them here.
+		// The announcement lands before the child binds, so its gate exists for
+		// the child's first call, and its asks reach this session's dialog.
+		// An older host without the event bus simply publishes no announcements.
+		pi.events?.on("subagents:child:session-created", (payload: unknown) => {
+			const data = payload as { sessionId?: unknown; parentSessionId?: unknown } | undefined;
+			const childId = typeof data?.sessionId === "string" ? data.sessionId : undefined;
+			if (childId === undefined) return;
+			const parentId = typeof data?.parentSessionId === "string" ? data.parentSessionId : undefined;
+			const ownId = activeCtx === undefined ? undefined : sessionIdOf(activeCtx);
+			setChild(childId, { parentSessionId: parentId ?? ownId ?? "" });
+		});
+		pi.events?.on("subagents:child:disposed", (payload: unknown) => {
+			const data = payload as { sessionId?: unknown } | undefined;
+			if (typeof data?.sessionId === "string") dropChild(data.sessionId);
+		});
 	} catch (error) {
-		// Do not leave the marker set if registration failed before the gate existed.
-		marker[LOADED] = false;
 		throw error;
 	}
 }

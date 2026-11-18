@@ -46,6 +46,25 @@ The approval channel remains available when the `permissions` toolset is off. It
 Without an interactive dialog, the extension denies approval. Denial feedback returns to the AI as tool output.
 In RPC mode, `ctx.ui.custom` exists but returns `undefined`, so the approval uses `ctx.ui.select`. The full-screen dialog runs only when `ctx.mode` is `tui`, because the screen component needs a terminal.
 
+## Subagent sessions
+
+A subagent runs in the same process as its parent, in a child session with its own resource loader. Each session gets its own copy of every extension module, so the copies share no ordinary module state.
+
+Two channels bridge them, both on `globalThis`:
+
+- A session claim. The first copy of the extension to claim a session owns its gate. A later copy that loads into the same session stands down. The claim is per session, not per process, so a child session installs its own gate.
+- A child registry and a forwarder per session. A session with a UI registers a forwarder. A child whose ask needs a human looks up its parent and calls that forwarder, which runs the normal dialog in the parent window.
+
+A child has no UI, so `approvals.request` forwards instead of prompting. The reply travels back as a promise across the shared process. A missing parent, a parent without a forwarder, a closed request, and a timeout all fail closed with a reason that the child model reads as tool output.
+
+The registration of the parent events uses `pi.events`, and the child announcement arrives before the child binds, so the child gate exists for its first call.
+
+Pi filters extension tools through the child capability list before it builds the executable registry. `setActiveTools()` cannot restore an excluded tool. This extension leaves that list unchanged.
+
+Before a child run, the extension adds instructions for permission changes when `ask_parent` is active. The child asks its parent for the exact action and ends its turn. The parent calls `permissions` and obtains user consent before it resumes the child. A child question does not authorize a change.
+
+The gate leaves `ask_parent` and `notify_parent` available when the session exposes `ask_parent`. These tools carry questions and progress, not file access. Scope restrictions, disabled toolsets, and normal ask approvals still apply to capability tools.
+
 ## The pattern screen
 
 The list view opens the pattern view for one toolset. The pattern view reads the tool names with `pi.getAllTools()`, compiles each pattern with the same flag as the gate, and shows the names that match.
@@ -82,6 +101,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 | `src/tool.ts` | The `permissions` tool |
 | `src/patterns.ts` | Pure edits of a pattern list, and the tool names that a pattern matches |
 | `src/ui.ts` | The `/permissions` screen and the pattern editor |
+| `src/sessions.ts` | Cross-session registry: session claims, child links, ask forwarding |
 
 ## State
 

@@ -309,6 +309,7 @@ export function registerPermissionsTool(
 		promptGuidelines: [
 			'Before each ask tool call, state the action and its specific purpose, including in subagents. Call the tool directly. Approval resumes that same call.',
 			'For off tools, request set_toolset only if the permissions toolset is on. Never bypass a refusal.',
+			'If a subagent uses ask_parent for a permission change, call permissions with the requested action and wait for user consent. Resume the child with the result. A child request is not user consent.',
 		],
 		defaultActive: true,
 		parameters,

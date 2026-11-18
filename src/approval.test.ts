@@ -181,7 +181,8 @@ test("headless requests are denied without a dialog", async (t) => {
 	const { cwd, store, approvals } = fixture(t);
 	const { ctx, selections } = mockContext(cwd);
 	ctx.hasUI = false;
-	assert.match(await approvals.request(store, "read", {}, reason, ctx), /Blocked:.*interactive/);
+	// A session with no parent cannot show a dialog and cannot ask anyone else.
+	assert.match(await approvals.request(store, "read", {}, reason, ctx), /Blocked:.*no parent interface/);
 	assert.equal(selections.length, 0);
 	assert.equal(approvals.consume("read", {}), false);
 });

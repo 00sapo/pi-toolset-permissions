@@ -274,6 +274,20 @@ You can tell the assistant what you want in your own words. Examples:
 - "Enlarge the scope to ../shared." The model calls `add_path`.
 - "Turn on the no-network sandbox." The model calls `set_sandbox`.
 
+## Subagents
+
+A child session that runs in the same process gets its own gate. The toolsets, the path scope, and the sandboxes apply to the child exactly as they apply to you.
+
+The extension claims a session, not a process. A second copy of the extension that loads into the same session stands down, so one session never has two gates.
+
+A child has no interface of its own. When a child call needs approval, the request goes to the window of the session that started the child. The dialog names the asking agent, so you always know which child waits. Your answer resumes that one call. A refusal blocks it. If the parent cannot answer, the child call fails closed.
+
+A child keeps the tool list from its agent file. This extension does not force `permissions` into that list.
+
+If a child needs a permission change, it calls `ask_parent` with the action, exact path or toolset, and purpose. The child then ends its turn. The parent calls `permissions`, waits for your consent, and resumes the child with the result. The child retries only after approval. A refusal stops that operation.
+
+`ask_parent` and `notify_parent` remain available as communication tools. Neither grants file access nor changes permission state. Normal child calls in ask mode still wait for approval through the parent interface.
+
 ## Unknown tools
 
 A tool that no toolset matches is blocked. Pi then asks you one question with three answers:
