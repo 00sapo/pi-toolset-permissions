@@ -103,24 +103,62 @@ test("isAllowedPath blocks a parent escape", () => {
 	});
 });
 
-test("isAllowedPath blocks a symlink escape", () => {
+test("isAllowedPath accepts project symlink paths but not direct external paths", () => {
 	withWorkspace((space) => {
 		const link = join(space.project, "link");
 		symlinkSync(space.outside, link, "dir");
 		const state = stateWith();
-		assert.equal(isAllowedPath(state, space.project, "link/secret.txt"), false);
+		for (const path of ["link", "link/secret.txt", "./link/secret.txt", "@link/secret.txt", join(link, "secret.txt")]) {
+			assert.equal(isAllowedPath(state, space.project, path), true, path);
+		}
+		assert.equal(isAllowedPath(state, space.project, join(space.outside, "secret.txt")), false);
+		assert.equal(isAllowedPath(state, space.project, "link/../../outside/secret.txt"), false);
 		assert.equal(isInside(space.project, join(link, "secret.txt")), false);
 	});
 });
 
-test("isAllowedPath blocks a write target that escapes through a symlink", () => {
+test("isAllowedPath accepts existing and missing write targets through project links", () => {
 	withWorkspace((space) => {
 		const link = join(space.project, "link");
 		symlinkSync(space.outside, link, "dir");
 		const state = stateWith();
-		assert.equal(isAllowedPath(state, space.project, join(link, "secret.txt")), false);
-		assert.equal(isAllowedPath(state, space.project, join(link, "new.txt")), false);
+		assert.equal(isAllowedPath(state, space.project, join(link, "secret.txt")), true);
+		assert.equal(isAllowedPath(state, space.project, join(link, "new.txt")), true);
+		assert.equal(isAllowedPath(state, space.project, join(link, "new", "nested.txt")), true);
 		assert.equal(isAllowedPath(state, space.project, join(space.project, "new.txt")), true);
+	});
+});
+
+test("project file links and broken links remain project paths", () => {
+	withWorkspace((space) => {
+		symlinkSync(join(space.outside, "secret.txt"), join(space.project, "file-link"));
+		symlinkSync(join(space.outside, "missing"), join(space.project, "broken-link"));
+		const state = stateWith();
+		assert.equal(isAllowedPath(state, space.project, "file-link"), true);
+		assert.equal(isAllowedPath(state, space.project, "broken-link/new.txt"), true);
+		assert.equal(isAllowedPath(state, space.project, join(space.outside, "missing", "new.txt")), false);
+	});
+});
+
+test("a project reached through an alias still allows its own links", () => {
+	withWorkspace((space) => {
+		const alias = join(space.root, "project-alias");
+		symlinkSync(space.project, alias, "dir");
+		symlinkSync(space.outside, join(space.project, "link"), "dir");
+		const state = stateWith();
+		assert.equal(isAllowedPath(state, alias, "link/secret.txt"), true);
+		assert.equal(isAllowedPath(state, alias, join(space.project, "file.txt")), true);
+		assert.equal(isAllowedPath(state, alias, join(space.outside, "secret.txt")), false);
+	});
+});
+
+test("links inside extra roots retain canonical scope enforcement", () => {
+	withWorkspace((space) => {
+		const extra = join(space.root, "extra");
+		mkdirSync(extra);
+		symlinkSync(space.outside, join(extra, "link"), "dir");
+		const state = stateWith((current) => { current.extra_paths = [extra]; });
+		assert.equal(isAllowedPath(state, space.project, join(extra, "link", "secret.txt")), false);
 	});
 });
 

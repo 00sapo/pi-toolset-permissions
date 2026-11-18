@@ -2,12 +2,15 @@ import { evaluateCall } from "./gate.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { approvalChoices, approvalLines, fullInputLines, plain, wrap } from "./approval-dialog.ts";
 import type { StateStore } from "./state.ts";
+import { askParent, type ForwardReply } from "./sessions.ts";
 
 interface ApprovalUI {
 	hasUI: boolean;
 	cwd: string;
 	/** "tui", "rpc", "json", or "print". */
 	mode?: string;
+	/** The asking session, so a child can reach the parent dialog. */
+	sessionManager?: { getSessionId(): string };
 	ui: {
 		custom?: ExtensionContext["ui"]["custom"];
 		select(title: string, choices: string[]): Promise<string | undefined>;
@@ -44,9 +47,32 @@ export class Approvals {
 		const decision = evaluateCall(store.get(), tool, input, ctx.cwd);
 		if (!decision.block) return "This call does not need approval. Call the tool directly.";
 		if (decision.kind !== "ask") return decision.reason;
-		if (!ctx.hasUI) return "Blocked: approval needs an interactive session.";
 		const names = decision.toolsets;
 		if (!names?.length) return "Blocked: no ask toolset was identified.";
+		if (!ctx.hasUI) {
+			// A child session has no interface of its own. Ask the parent session.
+			const forwarded = await askParent({
+				sessionId: ctx.sessionManager?.getSessionId() ?? "",
+				tool,
+				input,
+				reason,
+				names,
+			});
+			if (forwarded.kind === "unavailable") return forwarded.reason;
+			return this.settle(store, tool, input, names, forwarded.reply, ctx.cwd);
+		}
+		const reply = await this.dialog(tool, input, reason, names, ctx);
+		return this.settle(store, tool, input, names, reply, ctx.cwd);
+	}
+
+	/** Runs the consent dialog and reports its answer without touching the store. */
+	async dialog(
+		tool: string,
+		input: Record<string, unknown>,
+		reason: string,
+		names: string[],
+		ctx: ApprovalUI,
+	): Promise<ForwardReply | undefined> {
 		const choices = approvalChoices(names);
 		const details = { tool, input, reason, names };
 		// RPC mode defines custom() but returns undefined, which a truthiness check
@@ -106,15 +132,33 @@ export class Approvals {
 			approvalLines(details, 78, { bold: (text) => text, fg: (_color, text) => text }).join("\n"), choices,
 		);
 		if (answer === "Deny with explanation") {
-			const feedback = await ctx.ui.input("Why do you deny this call?", "Explain what the AI must change");
-			return `Blocked: the user denied this call.${feedback?.trim() ? ` User explanation: ${feedback}` : ""}`;
+			const explanation = await ctx.ui.input("Why do you deny this call?", "Explain what the AI must change");
+			return { choice: "Deny with explanation", explanation };
 		}
-		if (answer !== "Allow once" && answer !== choices[3]) return "Blocked: the user denied this call.";
+		if (answer === undefined) return undefined;
+		return { choice: answer };
+	}
+
+	/** Applies one answer: a one-call grant, an enable, or a refusal. */
+	settle(
+		store: StateStore,
+		tool: string,
+		input: Record<string, unknown>,
+		names: string[],
+		reply: ForwardReply | undefined,
+		cwd: string,
+	): string {
+		if (reply === undefined) return "Blocked: the user denied this call.";
+		const enableChoice = approvalChoices(names)[3];
+		if (reply.choice === "Deny with explanation") {
+			return `Blocked: the user denied this call.${reply.explanation?.trim() ? ` User explanation: ${reply.explanation}` : ""}`;
+		}
+		if (reply.choice !== "Allow once" && reply.choice !== enableChoice) return "Blocked: the user denied this call.";
 		// A dialog can stay open while another process changes the state.
 		store.reload();
-		const current = evaluateCall(store.get(), tool, input, ctx.cwd);
+		const current = evaluateCall(store.get(), tool, input, cwd);
 		if (current.block && current.kind !== "ask") return current.reason;
-		if (answer === choices[3]) {
+		if (reply.choice === enableChoice) {
 			store.update((state) => ({ ...state, toolsets: state.toolsets.map((entry) =>
 				names.includes(entry.name) && entry.enabled === "ask" ? { ...entry, enabled: true } : entry) }));
 			return "Approved. The matching ask toolsets are now on.";

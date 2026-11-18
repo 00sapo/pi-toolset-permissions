@@ -4,12 +4,25 @@ export type ScopeMode = "project" | "everywhere";
 
 export type ToolsetMode = "off" | "on" | "ask";
 
+/**
+ * The permissions toolset is on or off only. Each change already asks the user to
+ * confirm, so a second approval for the same call adds no protection.
+ */
+export const BOOLEAN_ONLY_TOOLSET = "permissions";
+
+/** False when a toolset supports only the on and off states. */
+export function allowsAsk(name: string): boolean {
+	return name.trim().toLowerCase() !== BOOLEAN_ONLY_TOOLSET;
+}
+
 export function toolsetMode(enabled: boolean | "ask"): ToolsetMode {
 	return enabled === "ask" ? "ask" : enabled ? "on" : "off";
 }
 
-export function nextToolsetMode(enabled: boolean | "ask"): boolean | "ask" {
-	return enabled === false ? true : enabled === true ? "ask" : false;
+/** The next state in the cycle. A boolean-only toolset skips ask. */
+export function nextToolsetMode(enabled: boolean | "ask", name: string): boolean | "ask" {
+	const next = enabled === false ? true : enabled === true ? "ask" : false;
+	return next === "ask" && !allowsAsk(name) ? false : next;
 }
 
 /** One group of tool names with a shared permission mode. */

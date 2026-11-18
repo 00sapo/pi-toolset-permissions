@@ -53,6 +53,8 @@ A path scope is the set of directories that file tools can touch. Project scope 
 The `permissions` toolset holds the `permissions` tool. Off blocks state changes through that tool, but still permits approval requests for ask tools.
 The `/permissions` command always works. Use that command to turn the toolset back on.
 
+The `permissions` toolset has only the on and off states. It does not accept ask, because every change through the tool already asks you to confirm. `set_toolset` refuses `mode: ask` for this toolset, and a stored ask value loads as on.
+
 Bash is one tool. Its patterns sit in the execute toolset. The sandbox is a second layer. It starts the whole call inside the boundary, and it does not read the command text.
 
 The model changes the state with the `permissions` tool. The tool asks you to agree before each change. Without a dialog, the tool cannot change the state.
@@ -148,6 +150,8 @@ Press space to cycle a toolset through off → on → ask → off.
 
 If both on and ask toolsets match, on takes precedence. Path limits and sandboxes still apply after approval.
 
+The `permissions` toolset is the exception. It has only off and on, so it never waits in ask mode.
+
 In ask mode, the AI explains the action and reason, then calls the target tool directly.
 The gate pauses that call and shows the approval dialog. If you approve, that same call runs immediately.
 The AI does not retry the call or request approval through a separate tool.
@@ -220,6 +224,8 @@ The path list starts with the project root. It then holds the extra paths.
 Press `a` to add a directory. Type a path. The extension makes sure that the path is an existing directory. Press `d` to remove the selected extra path.
 
 The project root cannot be removed. The extension saves the resolved path, so a symlink cannot add a larger tree than the dialog shows.
+
+A link inside the project counts as a project path. Reading or writing through that link is allowed even when the target is outside the project, because the project contains the link. A direct path to the target stays blocked unless an extra path covers it. For an extra path, the extension resolves the link and blocks a target outside that root.
 
 ## The sandboxes
 
@@ -299,6 +305,20 @@ You can tell the assistant what you want in your own words. Examples:
 - "Allow the write toolset." The model calls `set_toolset`.
 - "Enlarge the scope to ../shared." The model calls `add_path`.
 - "Turn on the no-network sandbox." The model calls `set_sandbox`.
+
+## Subagents
+
+A child session that runs in the same process gets its own gate. The toolsets, the path scope, and the sandboxes apply to the child exactly as they apply to you.
+
+The extension claims a session, not a process. A second copy of the extension that loads into the same session stands down, so one session never has two gates.
+
+A child has no interface of its own. When a child call needs approval, the request goes to the window of the session that started the child. The dialog names the asking agent, so you always know which child waits. Your answer resumes that one call. A refusal blocks it. If the parent cannot answer, the child call fails closed.
+
+A child keeps the tool list from its agent file. This extension does not force `permissions` into that list.
+
+If a child needs a permission change, it calls `ask_parent` with the action, exact path or toolset, and purpose. The child then ends its turn. The parent calls `permissions`, waits for your consent, and resumes the child with the result. The child retries only after approval. A refusal stops that operation.
+
+`ask_parent` and `notify_parent` remain available as communication tools. Neither grants file access nor changes permission state. Normal child calls in ask mode still wait for approval through the parent interface.
 
 ## Unknown tools
 

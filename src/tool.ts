@@ -9,7 +9,7 @@ import { statusLine, statusText } from "./status.ts";
 import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
 import { MAX_EXTRA_PATHS, MAX_TOOLSETS, checkPatterns, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
-import { toolsetMode } from "./types.ts";
+import { allowsAsk, toolsetMode } from "./types.ts";
 import type { Approvals } from "./approval.ts";
 
 const parameters = Type.Object({
@@ -205,9 +205,12 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 	if (env.params.mode !== undefined && env.params.enabled !== undefined) return { text: "Use mode or enabled, not both.", isError: true };
 	const mode = env.params.mode;
 	if (mode !== undefined && mode !== "off" && mode !== "on" && mode !== "ask") return { text: "set_toolset needs mode: off, on, or ask.", isError: true };
-	const enabled = mode === undefined ? env.params.enabled : mode === "ask" ? "ask" : mode === "on";
+	let enabled = mode === undefined ? env.params.enabled : mode === "ask" ? "ask" : mode === "on";
 	if (name === undefined || name === "") return { text: "set_toolset needs name.", isError: true };
 	if (enabled === undefined) return { text: "set_toolset needs mode: off, on, or ask.", isError: true };
+	if (enabled === "ask" && !allowsAsk(name)) {
+		return { text: `The toolset ${name} has only the on and off states. Use mode: on or off.`, isError: true };
+	}
 	const toolset = env.store.get().toolsets.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
 	if (toolset === undefined) return { text: `No toolset is named ${name}.`, isError: true };
 	if (toolset.enabled === enabled) return { text: `The toolset ${name} is already ${toolsetMode(enabled)}.` };
@@ -303,6 +306,7 @@ export function registerPermissionsTool(
 		promptGuidelines: [
 			'Before each ask tool call, state the action and its specific purpose, including in subagents. Call the tool directly. Approval resumes that same call.',
 			'For off tools, request set_toolset only if the permissions toolset is on. Never bypass a refusal.',
+			'If a subagent uses ask_parent for a permission change, call permissions with the requested action and wait for user consent. Resume the child with the result. A child request is not user consent.',
 		],
 		defaultActive: true,
 		parameters,

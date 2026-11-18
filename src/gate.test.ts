@@ -213,16 +213,25 @@ test("bash redirects are not part of the project path scope", () => {
 	});
 });
 
-test("a write path that escapes through a symlink is blocked", () => {
+test("project links pass scope checks while toolset modes still apply", () => {
 	withWorkspace((space) => {
 		symlinkSync(space.outside, join(space.project, "link"), "dir");
 		const state = stateWith((current) => setToolset(current, "write", true));
 		const existing = join(space.project, "link", "secret.txt");
 		const created = join(space.project, "link", "new.txt");
 		for (const path of [existing, created]) {
-			const reason = reasonOf(evaluateCall(state, "write", { path }, space.project));
-			assert.ok(reason.includes("outside the allowed roots"));
+			assert.deepEqual(evaluateCall(state, "write", { path }, space.project), { block: false });
 		}
+		assert.deepEqual(evaluateCall(state, "read", { path: existing }, space.project), { block: false });
+		setToolset(state, "write", "ask");
+		const asked = evaluateCall(state, "write", { path: created }, space.project);
+		assert.equal(asked.block && asked.kind, "ask");
+		setToolset(state, "write", false);
+		const disabled = evaluateCall(state, "write", { path: created }, space.project);
+		assert.equal(disabled.block && disabled.kind, "disabled");
+		setToolset(state, "write", true);
+		const direct = evaluateCall(state, "write", { path: join(space.outside, "new.txt") }, space.project);
+		assert.equal(direct.block && direct.kind, "scope");
 		assert.equal(
 			evaluateCall(state, "write", { path: join(space.project, "new.txt") }, space.project).block,
 			false,

@@ -70,8 +70,16 @@ test("extension wiring preserves an exact bash approval across request and reloa
 	const request = { action: "request_tool", tool: "bash", input, reason: "Read the current directory." };
 	assert.equal(await gate("permissions", request), undefined);
 	assert.match(await approve("request", request), /Approved once/);
-	// Registering the same extension twice must not install a second stale gate.
-	extension({ on() { assert.fail("duplicate registration"); } } as any);
+	// A second copy in the same session must not install a second stale gate. It
+	// registers its handlers, then stands down when it loses the session claim.
+	const duplicate = new Map<string, Function>();
+	extension({
+		registerTool() {}, registerCommand() {},
+		on: (name: string, fn: Function) => duplicate.set(name, fn),
+	} as any);
+	await duplicate.get("session_start")!({}, ctx);
+	// The duplicate stays passive: it neither blocks nor approves the call.
+	assert.equal(await duplicate.get("tool_call")!({ toolName: "bash", input, toolCallId: "duplicate" }, ctx), undefined);
 	assert.equal(await gate("bash", { timeout: 120, command: "pwd" }, "approved-call"), undefined);
 	// Repeated preflight of one call must not consume another one-time grant.
 	assert.equal(await gate("bash", { ...input }, "approved-call"), undefined);
@@ -103,7 +111,6 @@ test("extension wiring preserves an exact bash approval across request and reloa
 		registerTool: (tool: any) => tools.set(tool.name, tool),
 		registerCommand() {}, on: (name: string, fn: Function) => handlers.set(name, fn),
 	} as any);
-	extension({ on() { assert.fail("duplicate replacement registration"); } } as any);
 	await handlers.get("session_start")!({ reason: "reload" }, ctx);
 	assert.equal((await gate("bash", input, "approved-call")).block, true);
 	assert.match(await approve("after-reload", request), /Approved once/);
@@ -177,4 +184,139 @@ test("direct ask approval resumes the same event and uses current assistant text
 	const count = dialogs;
 	assert.equal(await gate("enabled"), undefined);
 	assert.equal(dialogs, count);
+});
+
+test("a child session in the same process gets its own gate and asks its parent", async (t) => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-child-session-"));
+	const previous = process.env.PI_PERMISSIONS_FILE;
+	const previousTimeout = process.env.PI_PERMISSIONS_ASK_TIMEOUT_MS;
+	process.env.PI_PERMISSIONS_FILE = join(cwd, "permissions.json");
+	process.env.PI_PERMISSIONS_ASK_TIMEOUT_MS = "2000";
+	const store = new StateStore();
+	// write is ask, so a child write has to reach a dialog that only the parent has.
+	store.update((state) => ({ ...state, toolsets: state.toolsets.map((entry) =>
+		entry.name === "write" ? { ...entry, enabled: "ask" } : entry) }));
+	const parentHandlers = new Map<string, Function>();
+	const childHandlers = new Map<string, Function>();
+	const events = new Map<string, Function>();
+	const parentSession = "parent-session";
+	const childSession = "child-session";
+	const dialogs: string[] = [];
+	let answer = "Allow once";
+	const makeCtx = (sessionId: string, hasUI: boolean) => ({
+		cwd, hasUI, mode: hasUI ? "tui" : "rpc",
+		sessionManager: { getSessionId: () => sessionId, getBranch: () => [] },
+		ui: {
+			setStatus() {},
+			notify() {},
+			select: async (title: string) => { dialogs.push(title); return answer; },
+			input: async () => undefined,
+		},
+	});
+	// A copy of the extension loads for the parent, then the child loads its own
+	// copy in the same process, as a subagent does.
+	const load = (handlers: Map<string, Function>) => extension({
+		registerTool() {}, registerCommand() {},
+		on: (name: string, fn: Function) => handlers.set(name, fn),
+		events: { on: (name: string, fn: Function) => events.set(name, fn) },
+	} as any);
+	t.after(async () => {
+		await parentHandlers.get("session_shutdown")?.({}, makeCtx(parentSession, true));
+		await childHandlers.get("session_shutdown")?.({}, makeCtx(childSession, false));
+		if (previous === undefined) delete process.env.PI_PERMISSIONS_FILE;
+		else process.env.PI_PERMISSIONS_FILE = previous;
+		if (previousTimeout === undefined) delete process.env.PI_PERMISSIONS_ASK_TIMEOUT_MS;
+		else process.env.PI_PERMISSIONS_ASK_TIMEOUT_MS = previousTimeout;
+		rmSync(cwd, { recursive: true, force: true });
+	});
+	const parentCtx = makeCtx(parentSession, true);
+	const childCtx = makeCtx(childSession, false);
+	load(parentHandlers);
+	await parentHandlers.get("session_start")!({}, parentCtx);
+	// pi-subagents announces the child before it binds.
+	events.get("subagents:child:session-created")!({ sessionId: childSession, parentSessionId: parentSession });
+	load(childHandlers);
+	await childHandlers.get("session_start")!({}, childCtx);
+
+	// The child gate is live: a path outside the roots is blocked there too.
+	const outside = { path: "/etc/passwd" };
+	const childBlocked = await childHandlers.get("tool_call")!({ toolName: "read", input: outside, toolCallId: "c1" }, childCtx);
+	assert.equal(childBlocked.block, true);
+	assert.match(childBlocked.reason, /outside the allowed roots/);
+
+	// An ask call in the child waits for the parent dialog, not a local one.
+	assert.equal(dialogs.length, 0);
+	const childAsk = childHandlers.get("tool_call")!({ toolName: "write", input: { path: join(cwd, "note.txt") }, toolCallId: "c2" }, childCtx);
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(dialogs.length, 1, "the parent session must run the dialog");
+	assert.match(dialogs[0], /Allow this call/);
+	assert.equal(await childAsk, undefined);
+
+	// A refused child ask fails closed with the parent's answer.
+	answer = "Deny";
+	const refused = await childHandlers.get("tool_call")!({ toolName: "write", input: { path: join(cwd, "other.txt") }, toolCallId: "c3" }, childCtx);
+	assert.equal(refused.block, true);
+	assert.match(refused.reason, /denied this call/);
+	await events.get("subagents:child:disposed")!({ sessionId: childSession });
+});
+
+test("a child without permissions uses ask_parent without changing its allowlist", async (t) => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-child-tools-"));
+	const previous = process.env.PI_PERMISSIONS_FILE;
+	process.env.PI_PERMISSIONS_FILE = join(cwd, "permissions.json");
+	const events = new Map<string, Function>();
+	const parentHandlers = new Map<string, Function>();
+	const childHandlers = new Map<string, Function>();
+	// The host removes permissions from the executable registry, not just the
+	// active tools. ask_parent is the child's supported escalation channel.
+	const active = ["read", "bash", "ask_parent", "notify_parent"];
+	const make = (handlers: Map<string, Function>) => extension({
+		registerTool() {}, registerCommand() {},
+		on: (name: string, fn: Function) => handlers.set(name, fn),
+		events: { on: (name: string, fn: Function) => events.set(name, fn) },
+		getAllTools: () => active.map((name) => ({ name })),
+		getActiveTools: () => [...active],
+		setActiveTools: () => assert.fail("the extension must preserve the child allowlist"),
+	} as any);
+	const ctxOf = (sessionId: string, hasUI: boolean) => ({
+		cwd, hasUI, mode: "tui",
+		sessionManager: { getSessionId: () => sessionId, getBranch: () => [] },
+		ui: { setStatus() {}, notify() {}, select: async () => "Deny", input: async () => undefined },
+	});
+	t.after(async () => {
+		await childHandlers.get("session_shutdown")?.({}, ctxOf("child-tools", false));
+		await parentHandlers.get("session_shutdown")?.({}, ctxOf("parent-tools", true));
+		if (previous === undefined) delete process.env.PI_PERMISSIONS_FILE;
+		else process.env.PI_PERMISSIONS_FILE = previous;
+		rmSync(cwd, { recursive: true, force: true });
+	});
+	make(parentHandlers);
+	await parentHandlers.get("session_start")!({}, ctxOf("parent-tools", true));
+	events.get("subagents:child:session-created")!({ sessionId: "child-tools", parentSessionId: "parent-tools" });
+	make(childHandlers);
+	await childHandlers.get("session_start")!({}, ctxOf("child-tools", false));
+	assert.equal(active.includes("permissions"), false);
+	const before = new StateStore().get();
+	const result = await childHandlers.get("before_agent_start")!({ systemPrompt: "Child instructions." }, ctxOf("child-tools", false));
+	assert.match(result.systemPrompt, /call ask_parent.*requested action, exact path or toolset, and purpose/);
+	assert.match(result.systemPrompt, /end your turn and wait for the parent/);
+	assert.match(result.systemPrompt, /parent must call permissions and obtain user consent/);
+	assert.match(result.systemPrompt, /Retry only after the parent reports approval/);
+	assert.match(result.systemPrompt, /If the user refuses, stop/);
+	assert.match(result.systemPrompt, /Never use bash.*bypass a block/);
+	assert.deepEqual(new StateStore().get(), before, "guidance does not grant access");
+	assert.deepEqual(active, ["read", "bash", "ask_parent", "notify_parent"]);
+	assert.equal(await childHandlers.get("before_agent_start")!({ systemPrompt: result.systemPrompt }, ctxOf("child-tools", false)), undefined);
+	const gate = (toolName: string, input: Record<string, unknown>) => childHandlers.get("tool_call")!(
+		{ toolName, input, toolCallId: "escalation" }, ctxOf("child-tools", false));
+	assert.equal(await gate("ask_parent", { question: "Please request add_path for /root to read a file." }), undefined);
+	assert.equal(await gate("notify_parent", { message: "Permission change needed." }), undefined);
+	assert.deepEqual(new StateStore().get(), before);
+	assert.equal((await gate("read", { path: "/root/private.txt" })).block, true);
+	assert.equal((await gate("write", { path: join(cwd, "file.txt") })).block, true);
+	// A session without the protocol tools gets neither guidance nor an exemption.
+	active.splice(active.indexOf("ask_parent"), 1);
+	assert.equal(await childHandlers.get("before_agent_start")!({ systemPrompt: "No parent tools." }, ctxOf("child-tools", false)), undefined);
+	assert.equal((await gate("ask_parent", { question: "Not exposed here." })).block, true);
+	await events.get("subagents:child:disposed")!({ sessionId: "child-tools" });
 });

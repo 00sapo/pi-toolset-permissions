@@ -10,6 +10,8 @@ A path scope is the set of directories that file tools can touch. A sandbox is a
 
 The `permissions` toolset holds the `permissions` tool. Off blocks state changes but preserves the approval channel for ask tools.
 
+The `permissions` toolset supports only the on and off states. Each change through the tool already asks the user to confirm, so a second approval for the same call adds no protection. The tool refuses `mode: ask` for this toolset, the screen skips ask in its cycle, and a stored ask value loads as on.
+
 ## Layers
 
 1. State. One JSON file holds the toolsets, the scope, the paths, and the sandboxes.
@@ -46,6 +48,25 @@ The approval channel remains available when the `permissions` toolset is off. It
 Without an interactive dialog, the extension denies approval. Denial feedback returns to the AI as tool output.
 In RPC mode, `ctx.ui.custom` exists but returns `undefined`, so the approval uses `ctx.ui.select`. The full-screen dialog runs only when `ctx.mode` is `tui`, because the screen component needs a terminal.
 
+## Subagent sessions
+
+A subagent runs in the same process as its parent, in a child session with its own resource loader. Each session gets its own copy of every extension module, so the copies share no ordinary module state.
+
+Two channels bridge them, both on `globalThis`:
+
+- A session claim. The first copy of the extension to claim a session owns its gate. A later copy that loads into the same session stands down. The claim is per session, not per process, so a child session installs its own gate.
+- A child registry and a forwarder per session. A session with a UI registers a forwarder. A child whose ask needs a human looks up its parent and calls that forwarder, which runs the normal dialog in the parent window.
+
+A child has no UI, so `approvals.request` forwards instead of prompting. The reply travels back as a promise across the shared process. A missing parent, a parent without a forwarder, a closed request, and a timeout all fail closed with a reason that the child model reads as tool output.
+
+The registration of the parent events uses `pi.events`, and the child announcement arrives before the child binds, so the child gate exists for its first call.
+
+Pi filters extension tools through the child capability list before it builds the executable registry. `setActiveTools()` cannot restore an excluded tool. This extension leaves that list unchanged.
+
+Before a child run, the extension adds instructions for permission changes when `ask_parent` is active. The child asks its parent for the exact action and ends its turn. The parent calls `permissions` and obtains user consent before it resumes the child. A child question does not authorize a change.
+
+The gate leaves `ask_parent` and `notify_parent` available when the session exposes `ask_parent`. These tools carry questions and progress, not file access. Scope restrictions, disabled toolsets, and normal ask approvals still apply to capability tools.
+
 ## The pattern screen
 
 The list view opens the pattern view for one toolset. The pattern view reads the tool names with `pi.getAllTools()`, compiles each pattern with the same flag as the gate, and shows the names that match.
@@ -62,9 +83,10 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 - Treat bash as one tool. The execute toolset sets the outer limit, and the sandbox sets the inner limit. Command text analysis is fragile, so the extension does not use it.
 - Put the sandbox in the kernel. Linux uses bubblewrap or unshare, macOS uses Seatbelt, and native Windows fails closed.
 - Keep one state file for all sessions. Permission state is not conversation state.
-- Save the canonical path when the user adds a directory. A symlink cannot add a larger tree than the dialog shows.
+- Treat the `permissions` toolset as binary. It is on or off. Ask would ask the user twice for one change, once in the gate and once in the tool dialog.
+- Treat a link inside the project as a project path. The project contains the link, so the gate accepts a path through it before link resolution. A direct path to the link target still needs an allowed root. Extra roots keep canonical containment, because the user names those directories explicitly.
 - Fail closed. A missing backend or a broken gate blocks the call.
-- Load the extension once. A global marker stops a second copy after `pi install` and `-e`. The shutdown handler clears the marker, so `/reload` works.
+- Load the extension once per session. A session claim stops a second copy in the same session, and it lets a child session install its own gate.
 - Write the state file with a temporary file and a rename. A crash cannot leave half a file.
 
 ## Modules
@@ -82,6 +104,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 | `src/tool.ts` | The `permissions` tool |
 | `src/patterns.ts` | Pure edits of a pattern list, and the tool names that a pattern matches |
 | `src/ui.ts` | The `/permissions` screen and the pattern editor |
+| `src/sessions.ts` | Cross-session registry: session claims, child links, ask forwarding |
 
 ## State
 
