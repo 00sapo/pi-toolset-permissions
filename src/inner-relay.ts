@@ -25,12 +25,15 @@ async function main(): Promise<void> {
   symlink(process.execPath, "/run/pi-bin/node").catch(() => {}),
  ]);
  // A minimal account database. The host users and their home paths stay outside the sandbox.
- const uid = process.getuid?.() ?? 1000;
- const gid = process.getgid?.() ?? 1000;
- await Promise.all([
-  writeFile("/etc/passwd", `pi:x:${uid}:${gid}:Sandboxed user:/tmp/home:/bin/sh\n`, { mode: 0o444 }).catch(() => {}),
-  writeFile("/etc/group", `pi:x:${gid}:\n`, { mode: 0o444 }).catch(() => {}),
- ]);
+ // With the filesystem layer off, `/etc` is the host one, so writing there would change the host.
+ if (process.env.PI_BRIDGE_GENERATE_ACCOUNTS === "1") {
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  await Promise.all([
+   writeFile("/etc/passwd", `pi:x:${uid}:${gid}:Sandboxed user:/tmp/home:/bin/sh\n`, { mode: 0o444 }).catch(() => {}),
+   writeFile("/etc/group", `pi:x:${gid}:\n`, { mode: 0o444 }).catch(() => {}),
+  ]);
+ }
  const sockets = new Set<Socket>();
  const server = createServer({ allowHalfOpen: true }, (client) => {
   const upstream = createConnection({ path: socketPath, allowHalfOpen: true });

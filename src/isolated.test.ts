@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { decideCall, foreignTools, isOwnTool, layerKey, layersActive, ownPaths } from "./layers.ts";
 
 test("no layer means no executor and no interception", () => {
-	const layers = { readonly_bash: false, no_network: false };
+	const layers = { filesystem: "off" as const, no_network: false };
 	assert.equal(layersActive(layers), false);
 	assert.equal(decideCall(layers, new Set(), "write"), undefined);
 	assert.equal(decideCall(layers, new Set(["read"]), "bash"), undefined);
@@ -11,9 +11,9 @@ test("no layer means no executor and no interception", () => {
 
 test("any layer blocks tools that the executor did not delegate", () => {
 	for (const layers of [
-		{ readonly_bash: true, no_network: false },
-		{ readonly_bash: false, no_network: true },
-		{ readonly_bash: true, no_network: true },
+		{ filesystem: "read" as const, no_network: false },
+		{ filesystem: "off" as const, no_network: true },
+		{ filesystem: "read+write" as const, no_network: true },
 	]) {
 		assert.equal(layersActive(layers), true);
 		const delegated = new Set(["read", "bash"]);
@@ -23,13 +23,13 @@ test("any layer blocks tools that the executor did not delegate", () => {
 });
 
 test("each layer combination has its own key", () => {
-	const keys = [
-		{ readonly_bash: false, no_network: false },
-		{ readonly_bash: true, no_network: false },
-		{ readonly_bash: false, no_network: true },
-		{ readonly_bash: true, no_network: true },
-	].map(layerKey);
-	assert.equal(new Set(keys).size, 4);
+	const keys = (["off", "read", "read+write"] as const).flatMap((filesystem) =>
+		[false, true].map((no_network) => layerKey({ filesystem, no_network })),
+	);
+	assert.equal(new Set(keys).size, 6);
+	const layers = { filesystem: "read" as const, no_network: false };
+	assert.notEqual(layerKey(layers, ["/project"]), layerKey(layers, ["/project", "/custom"]));
+	assert.equal(layerKey(layers, ["/custom", "/project"]), layerKey(layers, ["/project", "/custom"]));
 });
 
 test("only this extension's tools count as own", () => {

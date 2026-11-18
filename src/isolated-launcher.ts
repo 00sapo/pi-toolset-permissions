@@ -1,5 +1,6 @@
-import { accessSync, constants, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import type { FilesystemMode } from "./types.ts";
 import { fileURLToPath } from "node:url";
 
 export interface IsolatedLaunchOptions {
@@ -7,7 +8,8 @@ export interface IsolatedLaunchOptions {
 	token: string;
 	cwd: string;
 	extensions: string[];
-	readonly: boolean;
+	filesystem: FilesystemMode;
+	paths: string[];
 	/** True isolates the network namespace. False keeps the host network. The caller always passes it. */
 	network: boolean;
 	piPath?: string;
@@ -35,20 +37,31 @@ export interface IsolatedLaunchDependencies {
 /**
  * Git directories that a worktree or submodule keeps outside its working directory.
  * A pointer file names one directory, and a `commondir` file can name the shared parent.
- * Both are returned so git can read its objects and references.
+ *
+ * The pointer is repository content, so a crafted `.git` file could name any host path.
+ * A directory is reported only when it looks like a git directory, which a secret file
+ * or a home directory does not. The caller mounts it read-only or writable, so the check
+ * must not trust the file name alone.
  */
-export function gitDirectories(workdir: string, readText: (path: string) => string | null): string[] {
+export function gitDirectories(
+	workdir: string,
+	readText: (path: string) => string | null,
+	exists: (path: string) => boolean = existsSync,
+): string[] {
 	const pointer = readText(join(workdir, ".git"));
 	if (pointer === null) return [];
 	const match = /^gitdir:\s*(.+)$/m.exec(pointer);
 	if (!match) return [];
 	const gitDir = resolve(workdir, match[1].trim());
 	if (gitDir === workdir || gitDir.startsWith(`${workdir}/`)) return [];
+	// A real git directory holds HEAD and either objects or a commondir pointer.
+	const looksLikeGit = exists(join(gitDir, "HEAD")) && (exists(join(gitDir, "objects")) || exists(join(gitDir, "commondir")));
+	if (!looksLikeGit) return [];
 	const found = [gitDir];
 	const common = readText(join(gitDir, "commondir"));
 	if (common !== null) {
 		const shared = resolve(gitDir, common.trim());
-		if (isAbsolute(shared) && !shared.startsWith(`${workdir}/`)) found.push(shared);
+		if (isAbsolute(shared) && !shared.startsWith(`${workdir}/`) && exists(join(shared, "objects"))) found.push(shared);
 	}
 	return found;
 }
@@ -93,6 +106,23 @@ export function parentDirectories(path: string): string[] {
 	const found: string[] = [];
 	for (let index = 1; index < parts.length; index += 1) found.push(`/${parts.slice(0, index).join("/")}`);
 	return found;
+}
+
+export function containsPath(root: string, path: string): boolean {
+ return root === "/" || path === root || path.startsWith(`${root}/`);
+}
+
+/** Canonical roots must not replace the private runtime or system mounts. */
+export function canonicalRoots(paths: string[], canonical: (path: string) => string = realpathSync): string[] {
+ const protectedPaths = ["/run", "/proc", "/dev", "/sys", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64"];
+ return [...new Set(paths.map(path => {
+  absolutePath(path, "Allowed root");
+  const root = canonical(resolve(path));
+  if (protectedPaths.some(p => containsPath(root, p) || containsPath(p, root))) {
+   throw new Error(`The sandbox root ${root} overlaps a protected path. Use filesystem off for unrestricted access.`);
+  }
+  return root;
+ }))];
 }
 
 export interface SystemMounts {
@@ -151,10 +181,11 @@ export const ETC_FILES = [
 	"inputrc",
 	"services",
 	"protocols",
+ "ssl/openssl.cnf",
 ];
 
 /** `/etc` directories with data that the binaries read at runtime. */
-export const ETC_DIRECTORIES = ["ssl", "ca-certificates", "ld.so.conf.d", "terminfo", "alternatives"];
+export const ETC_DIRECTORIES = ["ssl/certs", "ca-certificates", "ld.so.conf.d", "terminfo", "alternatives"];
 
 /** Entries that the launcher generates inside the sandbox instead of taking them from the host. */
 export const GENERATED_ETC = ["passwd", "group"] as const;
@@ -221,13 +252,15 @@ export function buildIsolatedLaunch(
 		throw new Error("The bridge token must be nonempty and contain no whitespace or control bytes.");
 	}
 	if (typeof options.network !== "boolean") throw new Error("network must be a boolean.");
-	if (typeof options.readonly !== "boolean") throw new Error("readonly must be a boolean.");
+	if (!["off", "read", "read+write"].includes(options.filesystem)) throw new Error("Invalid filesystem mode.");
+	if (!Array.isArray(options.paths)) throw new Error("paths must be an array.");
+	const restricted = options.filesystem !== "off";
 
 	// Resolved with the host PATH, then replaced by the directories that the sandbox mounts.
 	const hostPath = dependencies.env.PATH ?? "/usr/bin:/bin";
 	const env: Record<string, string> = {
 		PATH: "/usr/bin:/bin",
-		HOME: "/tmp/home",
+		HOME: "/run/pi-home",
 		LANG: dependencies.env.LANG ?? "C.UTF-8",
 		TERM: dependencies.env.TERM ?? "dumb",
 		PI_TOOLSET_INNER: "1",
@@ -236,7 +269,7 @@ export function buildIsolatedLaunch(
 		PI_OFFLINE: "1",
 		PI_SKIP_VERSION_CHECK: "1",
 		PI_TELEMETRY: "0",
-		PI_CODING_AGENT_DIR: "/run/pi-agent",
+		PI_CODING_AGENT_DIR: "/run/pi-agent-private",
 		// A fixed host name. The default would show the name of the host machine.
 		HOSTNAME: HOST_NAME,
 	};
@@ -271,7 +304,9 @@ export function buildIsolatedLaunch(
 		const previous = writable.get(path);
 		writable.set(path, previous === true || writableHere);
 	};
-	addMount(workdir, !options.readonly);
+	const roots = restricted ? canonicalRoots(options.paths, canonical) : [];
+ if (restricted && !roots.some(root => containsPath(root, workdir))) throw new Error("cwd must belong to an allowed root.");
+ for (const root of roots) addMount(root, options.filesystem === "read+write");
 	for (const path of extensions) addMount(path, false);
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
@@ -283,13 +318,13 @@ export function buildIsolatedLaunch(
 	}
 	// A worktree keeps its git directories outside the project. Git needs them to work, and
 	// with the read-only layer off, git must also be able to write its index and objects.
-	for (const path of gitDirectories(workdir, readText)) addMount(canonical(path), !options.readonly);
+	for (const path of restricted ? canonicalRoots(gitDirectories(workdir, readText, exists), canonical) : []) addMount(path, options.filesystem === "read+write");
 	const mounts = new Map<string, { source: string; writable: boolean }>();
 	for (const path of writable.keys()) mounts.set(path, { source: path, writable: writable.get(path) === true });
 	const system = systemMounts(exists, dependencies.readLink);
-	const reserved = new Set(["/tmp", "/run", "/dev", "/proc", ...system.binds.map((bind) => bind.target)]);
+	const reserved = new Set(["/run", "/dev", "/proc", ...system.binds.map((bind) => bind.target)]);
 	for (const path of mounts.keys()) {
-		if (reserved.has(path)) throw new Error(`The sandbox cannot mount ${path}: the path belongs to the sandbox itself.`);
+		if (restricted && reserved.has(path)) throw new Error(`The sandbox cannot mount ${path}: the path belongs to the sandbox itself.`);
 	}
 
 	const args: string[] = [
@@ -304,28 +339,32 @@ export function buildIsolatedLaunch(
 		"--hostname",
 		HOST_NAME,
 		// An empty root. Nothing from the host is visible unless it is added below.
-		"--tmpfs",
-		"/",
+		// `--dev-bind` keeps device nodes usable. A plain `--bind` of the root leaves some
+		// entries in a state where spawning an executable returns EACCES.
+		...(restricted ? ["--tmpfs", "/"] : ["--dev-bind", "/", "/"]),
 	];
-	for (const bind of system.binds) args.push("--ro-bind", bind.source, bind.target);
-	for (const link of system.symlinks) args.push("--symlink", link.target, link.path);
+	for (const bind of restricted ? system.binds : []) args.push("--ro-bind", bind.source, bind.target);
+	for (const link of restricted ? system.symlinks : []) args.push("--symlink", link.target, link.path);
 	// An empty `/etc`. The selected entries are bound below, and the relay writes the
 	// generated account files before it starts Pi.
-	args.push("--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/etc", "--dir", "/tmp/home");
+	args.push("--proc", "/proc");
+ if (restricted) args.push("--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/etc", "--dir", "/tmp/home");
+ args.push("--tmpfs", "/run", "--dir", "/run/pi-home");
+ env.PI_BRIDGE_GENERATE_ACCOUNTS = restricted ? "1" : "0";
 	// `/proc/sys/kernel/random/boot_id` identifies the host boot. Node and OpenSSL read
 	// `/dev/urandom` for entropy, so an empty directory here changes nothing else.
-	args.push("--tmpfs", "/proc/sys/kernel/random");
+	if (restricted) args.push("--tmpfs", "/proc/sys/kernel/random");
 
 	// A mount point must exist inside the sandbox before a bind targets it.
 	const created = new Set([...reserved, "/tmp/home"]);
-	for (const path of [...mounts.keys()].sort()) {
+	for (const path of restricted ? [...mounts.keys()].sort() : []) {
 		for (const dir of parentDirectories(path)) {
 			if (created.has(dir)) continue;
 			created.add(dir);
 			args.push("--dir", dir);
 		}
 	}
-	for (const path of [...mounts.keys()].sort()) {
+	for (const path of restricted ? [...mounts.keys()].sort() : []) {
 		args.push(mounts.get(path)!.writable ? "--bind" : "--ro-bind", path, path);
 	}
 
@@ -333,6 +372,7 @@ export function buildIsolatedLaunch(
 		"--dir", "/run/pi-bridge",
 		"--ro-bind", options.socketPath, env.PI_BRIDGE_SOCKET,
 		"--dir", "/run/pi-agent",
+  "--dir", "/run/pi-agent-private",
 		"--chdir", workdir,
 		"--", node,
 		relay, pi,

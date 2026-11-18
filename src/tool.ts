@@ -3,6 +3,7 @@
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Static } from "typebox";
+import { platformPolicy, layersEnabled } from "./platform.ts";
 import { SANDBOXES } from "./sandboxes.ts";
 import { statusLine, statusText } from "./status.ts";
 import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
@@ -27,7 +28,7 @@ const parameters = Type.Object({
 		{ description: "Action to run. Read status first when the reason for a block is unclear." },
 	),
 	enabled: Type.Optional(Type.Boolean({ description: "Legacy on/off value for set_toolset, or value for set_sandbox." })),
-	mode: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("on"), Type.Literal("ask")], { description: "State for set_toolset. Use mode or enabled, not both." })),
+	mode: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("on"), Type.Literal("ask"), Type.Literal("read"), Type.Literal("read+write")], { description: "set_toolset: off, on, ask. Filesystem: off, read, read+write. Use mode or enabled, not both." })),
 	tool: Type.Optional(Type.String({ description: "Target tool name for request_tool." })),
 	input: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Exact target arguments for request_tool." })),
 	reason: Type.Optional(Type.String({ description: "What the call does and why it is needed." })),
@@ -42,7 +43,7 @@ const parameters = Type.Object({
 		Type.Array(Type.String(), { description: "Regular expression sources for add_toolset, tested against tool names." }),
 	),
 	sandbox: Type.Optional(
-		Type.Union([Type.Literal("readonly_bash"), Type.Literal("no_network")], {
+		Type.Union([Type.Literal("filesystem"), Type.Literal("no_network")], {
 			description: "Sandbox key for set_sandbox.",
 		}),
 	),
@@ -60,6 +61,10 @@ interface ToolEnv {
 	onChanged: (ctx: ExtensionToolContext) => void;
 	ctx: ExtensionToolContext;
 	params: Params;
+}
+
+function onOff(value: boolean): string {
+	return value ? "on" : "off";
 }
 
 function messageOf(error: unknown): string {
@@ -199,6 +204,7 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 	const name = env.params.name?.trim();
 	if (env.params.mode !== undefined && env.params.enabled !== undefined) return { text: "Use mode or enabled, not both.", isError: true };
 	const mode = env.params.mode;
+	if (mode !== undefined && mode !== "off" && mode !== "on" && mode !== "ask") return { text: "set_toolset needs mode: off, on, or ask.", isError: true };
 	const enabled = mode === undefined ? env.params.enabled : mode === "ask" ? "ask" : mode === "on";
 	if (name === undefined || name === "") return { text: "set_toolset needs name.", isError: true };
 	if (enabled === undefined) return { text: "set_toolset needs mode: off, on, or ask.", isError: true };
@@ -223,20 +229,36 @@ async function setToolset(env: ToolEnv): Promise<ToolOutcome> {
 
 async function setSandbox(env: ToolEnv): Promise<ToolOutcome> {
 	const key = env.params.sandbox;
-	const enabled = env.params.enabled;
-	if (key === undefined) return { text: "set_sandbox needs sandbox: readonly_bash or no_network.", isError: true };
-	if (enabled === undefined) return { text: "set_sandbox needs enabled: true or false.", isError: true };
+	if (key === undefined) return { text: "set_sandbox needs sandbox: filesystem or no_network.", isError: true };
 	const info = SANDBOXES.find((sandbox) => sandbox.key === key);
 	if (info === undefined) return { text: `No sandbox is named ${key}.`, isError: true };
+	const policy = platformPolicy();
+	if (!layersEnabled(policy)) return { text: policy.reason ?? policy.coverage, isError: true };
+	const { mode, enabled } = env.params;
+	let value: "off" | "read" | "read+write" | boolean;
+	if (key === "filesystem") {
+		if (enabled !== undefined || (mode !== "off" && mode !== "read" && mode !== "read+write")) {
+			return { text: "Filesystem needs mode: off, read, or read+write. Do not use enabled.", isError: true };
+		}
+		if (env.store.get().scope === "everywhere" && mode !== "off") {
+			return { text: "Filesystem requires project scope. Set scope to project first.", isError: true };
+		}
+		value = mode;
+	} else {
+		if (mode !== undefined || enabled === undefined) return { text: "No network needs enabled: true or false. Do not use mode.", isError: true };
+		value = enabled;
+	}
 	const before = env.store.get().sandboxes[key];
-	if (before === enabled) return { text: `The sandbox ${info.label} is already ${onOff(enabled)}.` };
-	const title = `Turn ${enabled ? "on" : "off"} ${info.label}?`;
-	const message = `${key}: ${onOff(before)} → ${onOff(enabled)}\n\n${info.description}`;
+	const shown = typeof value === "boolean" ? onOff(value) : value;
+	if (before === value) return { text: `The sandbox ${info.label} is already ${shown}.` };
+	const prior = typeof before === "boolean" ? onOff(before) : before;
+	const title = `Set ${info.label} to ${shown}?`;
+	const message = `${key}: ${prior} → ${shown}\n\n${info.description}`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(
 		env,
-		(current) => ({ ...current, sandboxes: { ...current.sandboxes, [key]: enabled } }),
-		`The sandbox ${info.label} is now ${onOff(enabled)}.`,
+		(current) => ({ ...current, sandboxes: { ...current.sandboxes, [key]: value } }),
+		`The sandbox ${info.label} is now ${shown}.`,
 	);
 }
 

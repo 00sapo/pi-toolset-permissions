@@ -37,7 +37,7 @@ function commandOf(plan: ReturnType<typeof wrapBash>): string {
 
 test("both sandboxes are off by default", () => {
 	const state = defaultState();
-	assert.deepEqual(state.sandboxes, { readonly_bash: false, no_network: false });
+	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
 	assert.equal(wrapBash("ls", state, TOOLS), null);
 });
 
@@ -47,28 +47,23 @@ test("shellQuote wraps a word and escapes single quotes", () => {
 	assert.equal(shellQuote(""), "''");
 });
 
-test("the read-only sandbox binds the root read-only", () => {
-	const state = stateWith((current) => {
-		current.sandboxes.readonly_bash = true;
-	});
-	const command = commandOf(wrapBash("ls -la", state, TOOLS));
-	assert.ok(command.startsWith("'/usr/bin/bwrap' --ro-bind / / --dev /dev --proc /proc"));
-	assert.ok(command.includes("--die-with-parent -- '/bin/sh' -lc 'ls -la'"));
-	assert.ok(!command.includes("--unshare-net"));
+test("restricted Linux bash mounts project and extra roots, not host root", () => {
+ const state = stateWith(s => {s.sandboxes.filesystem = "read+write"; s.extra_paths = [tmpdir()];});
+ const command = commandOf(wrapBash("ls",state,TOOLS,process.cwd()));
+ assert.ok(command.includes("'--tmpfs' '/'"));
+ assert.ok(command.includes(`'--bind' '${process.cwd()}' '${process.cwd()}'`));
+ assert.ok(!command.includes("'--bind' '/' '/'"));
 });
-
-test("macOS uses Seatbelt and denies file writes", () => {
-	const state = stateWith((current) => {
-		current.sandboxes.readonly_bash = true;
-	});
-	assert.equal(
-		seatbeltProfile(state),
-		'(version 1)(allow default)(deny file-write*)(allow file-write* (literal "/dev/null"))(allow file-write* (literal "/dev/stdout"))(allow file-write* (literal "/dev/stderr"))(allow file-write* (literal "/dev/tty"))',
-	);
-	const command = commandOf(wrapBash("touch x", state, MACOS_TOOLS));
-	assert.ok(command.startsWith("'/usr/bin/sandbox-exec' -p '"));
-	assert.ok(command.includes("(deny file-write*)"));
-	assert.ok(command.endsWith(" '/bin/sh' -lc 'touch x'"));
+ test("macOS restricts reads and permits writes only in allowed roots", () => {
+ const state = stateWith(s => {s.sandboxes.filesystem = "read+write"; s.extra_paths = [tmpdir()];});
+ const profile = seatbeltProfile(state,process.cwd());
+ assert.ok(profile.includes("(deny file-read*)"));
+ assert.ok(profile.includes("(deny file-write*)"));
+ assert.ok(profile.includes(`(allow file-read* (subpath "${process.cwd()}"))`));
+ assert.ok(profile.includes(`(allow file-write* (subpath "${process.cwd()}"))`));
+ assert.ok(profile.includes('(allow file-read* (subpath "/System"))'));
+ const read = seatbeltProfile({...state,sandboxes:{...state.sandboxes,filesystem:"read"}},process.cwd());
+ assert.ok(!read.includes(`(allow file-write* (subpath "${process.cwd()}"))`));
 });
 
 test("macOS denies the network", () => {
@@ -82,7 +77,7 @@ test("macOS denies the network", () => {
 
 test("macOS without sandbox-exec fails closed", () => {
 	const state = stateWith((current) => {
-		current.sandboxes.readonly_bash = true;
+		current.sandboxes.filesystem = "read";
 	});
 	const plan = wrapBash("ls", state, { ...MACOS_TOOLS, sandboxExec: null });
 	assert.ok(plan !== null && "error" in plan);
@@ -118,17 +113,18 @@ test("the no-network sandbox unshares the network namespace", () => {
 
 test("both sandboxes combine", () => {
 	const state = stateWith((current) => {
-		current.sandboxes.readonly_bash = true;
+		current.sandboxes.filesystem = "read";
 		current.sandboxes.no_network = true;
 	});
 	const command = commandOf(wrapBash("rm -rf x", state, TOOLS));
-	assert.ok(command.includes("--ro-bind / /"));
+	assert.ok(command.includes("'--ro-bind'"));
+ assert.ok(!command.includes("'--ro-bind' '/' '/'"));
 	assert.ok(command.includes("--unshare-net"));
 });
 
 test("read-only without bubblewrap reports an error", () => {
 	const state = stateWith((current) => {
-		current.sandboxes.readonly_bash = true;
+		current.sandboxes.filesystem = "read";
 	});
 	const plan = wrapBash("ls", state, { bwrap: null, unshare: "/usr/bin/unshare", sandboxExec: null, shell: "/bin/sh", platform: "linux" });
 	assert.ok(plan !== null && "error" in plan);
@@ -172,4 +168,42 @@ test("detectSandboxTools names the platform and a shell", () => {
 	assert.equal(tools.platform, process.platform);
 	assert.equal(tools.shell, process.platform === "win32" ? "cmd.exe" : "/bin/sh");
 	assert.ok(tools.bwrap === null || tools.bwrap.endsWith("bwrap"));
+});
+
+test("invalid scope fails closed and off does not canonicalize roots", () => {
+ const state = stateWith(s=>{s.sandboxes.filesystem="read";s.extra_paths=["/"];});
+ const plan = wrapBash("ls",state,TOOLS,process.cwd());
+ assert.ok(plan && "error" in plan);
+ state.sandboxes.filesystem="off";state.sandboxes.no_network=true;
+ assert.ok(commandOf(wrapBash("ls",state,TOOLS,"/missing")).includes("--bind / /"));
+});
+
+test("macOS includes explicit Node runtime and Pi session exceptions", () => {
+ const state = stateWith(s=>{s.sandboxes.filesystem="read";});
+ const profile = seatbeltProfile(state,process.cwd());
+ assert.ok(profile.includes('sessions"))'));
+ assert.ok(profile.includes('settings.json"))'));
+ assert.ok(profile.includes('models.json"))'));
+ assert.ok(!profile.includes('auth.json'));
+});
+
+test("live Linux bash permits project writes but blocks outside access", async (t) => {
+ const {spawnSync} = await import("node:child_process");
+ const {mkdirSync,readFileSync} = await import("node:fs");
+ const probe = spawnSync("bwrap",["--bind","/","/","--unshare-net","--","/bin/true"],{encoding:"utf8"});
+ if(probe.status !== 0) return t.skip(`bubblewrap namespaces unavailable: ${probe.stderr ?? probe.error}`);
+ const dir = mkdtempSync(join(tmpdir(),"pi-wrap-live-"));
+ const project = join(dir,"project");const outside = join(dir,"outside");
+ mkdirSync(project);mkdirSync(outside);writeFileSync(join(outside,"secret"),"hidden");
+ try {
+  for(const filesystem of ["read","read+write","off"] as const) {
+   const state = stateWith(s=>{s.sandboxes.filesystem=filesystem;s.sandboxes.no_network=true;});
+   const command = filesystem === "read" ? "! touch ./new && ! cat ../outside/secret" : filesystem === "read+write" ? "echo project > ./new && ! cat ../outside/secret" : "echo host > ../outside/new";
+   const plan = wrapBash(command,state,TOOLS,project);
+   const result = spawnSync("/bin/sh",["-c",commandOf(plan)],{cwd:project,encoding:"utf8"});
+   assert.equal(result.status,0,`${filesystem}: ${result.stderr}`);
+  }
+  assert.equal(readFileSync(join(project,"new"),"utf8"),"project\n");
+  assert.equal(readFileSync(join(outside,"new"),"utf8"),"host\n");
+ } finally {rmSync(dir,{recursive:true,force:true});}
 });

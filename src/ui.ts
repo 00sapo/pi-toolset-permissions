@@ -114,9 +114,12 @@ export async function openPermissions(
 				}
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
-					const mark = sandboxRowMark(target, platform);
+					const mark = item.info.key === "filesystem" && state.scope === "everywhere"
+						? " [disabled: requires project scope]" : sandboxRowMark(target, platform);
 					const shown = mark.length === 0 ? "" : theme.fg("warning", mark);
-					return `   ${marker} ${name}${onOff(state.sandboxes[item.info.key])}${shown}`;
+					const mode = item.info.key === "filesystem"
+						? `[${state.sandboxes.filesystem.toUpperCase()}]` : onOff(state.sandboxes.no_network);
+					return `   ${marker} ${name}${mode}${shown}`;
 				}
 				case "scope":
 					return `   ${marker} ${"All paths".padEnd(labelWidth)}[${state.scope.toUpperCase()}]`;
@@ -144,6 +147,7 @@ export async function openPermissions(
 				const next = rows[position + 1];
 				if (item.kind === "sandbox" && (next === undefined || next.kind !== "sandbox")) {
 					for (const note of sandboxMenuNote(target, platform)) lines.push(theme.fg("dim", ` ${note}`));
+					if (state.scope === "everywhere") lines.push(theme.fg("dim", " Filesystem is disabled. Select project scope to use it."));
 				}
 			});
 			lines.push(
@@ -215,6 +219,11 @@ export async function openPermissions(
 				refresh();
 				return;
 			}
+			if (info.key === "filesystem" && store.get().scope === "everywhere") {
+				notify("Filesystem requires project scope. Select project scope first.", "warning");
+				refresh();
+				return;
+			}
 			// macOS covers bash only. A layer that wraps one tool must not look like full coverage.
 			if (requiresBashOnly(policy)) {
 				const proceed = await ctx.ui.confirm(
@@ -228,7 +237,10 @@ export async function openPermissions(
 			}
 			update((current) => ({
 				...current,
-				sandboxes: { ...current.sandboxes, [info.key]: !current.sandboxes[info.key] },
+				sandboxes: info.key === "filesystem"
+					? { ...current.sandboxes, filesystem: current.sandboxes.filesystem === "off" ? "read"
+						: current.sandboxes.filesystem === "read" ? "read+write" : "off" }
+					: { ...current.sandboxes, no_network: !current.sandboxes.no_network },
 			}));
 		};
 

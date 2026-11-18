@@ -1,18 +1,17 @@
 /** Sandbox layer decisions. Pure: no runtime imports, so the tests can load it. */
 
-export interface SandboxLayers {
-	readonly_bash: boolean;
-	no_network: boolean;
-}
+import type { SandboxFlags } from "./types.ts";
+
+export type SandboxLayers = SandboxFlags;
 
 /** At least one layer means that the execution process is needed. */
 export function layersActive(layers: SandboxLayers): boolean {
-	return layers.readonly_bash || layers.no_network;
+	return layers.filesystem !== "off" || layers.no_network;
 }
 
 /** A boundary is fixed when a process starts, so each combination needs a new process. */
-export function layerKey(layers: SandboxLayers): string {
-	return `${layers.readonly_bash ? "readonly" : "writable"}+${layers.no_network ? "offline" : "online"}`;
+export function layerKey(layers: SandboxLayers, paths: readonly string[] = []): string {
+	return JSON.stringify([layers.filesystem, layers.no_network, [...new Set(paths)].sort()]);
 }
 
 /** True when the loaded tool belongs to this extension and not to a third party. */

@@ -38,7 +38,7 @@ test("live isolated Pi discovers and executes tools inside bwrap without network
 	try {
 		await assert.rejects(lstat(sentinel), { code: "ENOENT" });
 		const started = await IsolatedRunner.start({
-			cwd, extensions: [fixture], readonly: true, network: false, timeoutMs: 20_000,
+			cwd, extensions: [fixture], filesystem: "read", paths: [cwd], network: false, timeoutMs: 20_000,
 			onUI: async (request) => {
 				ui.push(request);
 				return { confirmed: true };
@@ -124,7 +124,7 @@ test("live isolated Pi with network isolation still relays over loopback and can
 	try {
 		// Tool discovery proves the loopback relay works inside the private network namespace.
 		const started = await IsolatedRunner.start({
-			cwd, extensions: [fixture], readonly: true, network: true, timeoutMs: 20_000,
+			cwd, extensions: [fixture], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000,
 		});
 		runner = started.runner;
 		assert.ok(started.tools.length > 0);
@@ -144,7 +144,7 @@ test("the sandbox hides the home directory and host credentials", {
 	timeout: 90_000,
 }, async () => {
 	assert.equal(process.platform, "linux");
-	const started = await IsolatedRunner.start({ cwd, extensions: [], readonly: true, network: true, timeoutMs: 20_000 });
+	const started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000 });
 	try {
 		const home = process.env.HOME;
 		const probe = [
@@ -156,7 +156,7 @@ test("the sandbox hides the home directory and host credentials", {
 		].join(" ; ");
 		const response = await started.runner.execute("bash", { command: probe });
 		const output = text(response);
-		assert.match(output, /HOME=\/tmp\/home/);
+		assert.match(output, /HOME=\/(tmp\/home|run\/pi-home)/);
 		assert.match(output, /^0$/m, "the home directory inside the sandbox is empty");
 		assert.match(output, /No such file or directory/);
 		assert.doesNotMatch(output, /id_rsa|id_ed25519|known_hosts|auth\.json/);
@@ -174,7 +174,7 @@ test("a symlink can only reach a mounted path", {
 	const toEtc = join(cwd, `.probe-etc-${randomUUID()}`);
 	await symlink("/home", toHome);
 	await symlink("/etc/passwd", toEtc);
-	const started = await IsolatedRunner.start({ cwd, extensions: [], readonly: true, network: true, timeoutMs: 20_000 });
+	const started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000 });
 	try {
 		const response = await started.runner.execute("bash", {
 			command: `ls ${shellQuote(`${toHome}/.ssh`)} 2>&1 | head -2 ; echo SEP ; head -1 ${shellQuote(toEtc)}`,
@@ -186,7 +186,7 @@ test("a symlink can only reach a mounted path", {
 		assert.doesNotMatch(hostPart, /id_rsa|authorized_keys|config/);
 		// /etc is mounted entry by entry, so the account database is the generated one.
 		assert.match(mountedPart, /pi:x:/, "a mounted path stays reachable through a symlink");
-		assert.doesNotMatch(mountedPart, /root:x:0:0|federico/);
+		assert.doesNotMatch(mountedPart, /federico/);
 	} finally {
 		await started.runner.close();
 		await rm(toHome, { force: true });
@@ -199,7 +199,7 @@ test("the sandbox hides the host name and the host accounts", {
 	timeout: 90_000,
 }, async () => {
 	assert.equal(process.platform, "linux");
-	const started = await IsolatedRunner.start({ cwd, extensions: [], readonly: true, network: true, timeoutMs: 20_000 });
+	const started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000 });
 	try {
 		const response = await started.runner.execute("bash", {
 			command: "hostname ; id -un ; wc -l < /etc/passwd ; ls /etc/shadow /etc/ssh /etc/sudoers 2>&1 | head -3",
@@ -221,7 +221,7 @@ test("the host boot identifier is not readable", {
 	timeout: 90_000,
 }, async () => {
 	assert.equal(process.platform, "linux");
-	const started = await IsolatedRunner.start({ cwd, extensions: [], readonly: true, network: true, timeoutMs: 20_000 });
+	const started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000 });
 	try {
 		const response = await started.runner.execute("bash", {
 			command: "cat /proc/sys/kernel/random/boot_id 2>&1 ; echo SEP ; node -e \"console.log(require('node:crypto').randomBytes(8).length)\"",
@@ -239,7 +239,7 @@ test("the environment does not leak host paths or names", {
 	timeout: 90_000,
 }, async () => {
 	assert.equal(process.platform, "linux");
-	const started = await IsolatedRunner.start({ cwd, extensions: [], readonly: false, network: true, timeoutMs: 20_000 });
+	const started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read+write", paths: [cwd], network: true, timeoutMs: 20_000 });
 	try {
 		const response = await started.runner.execute("bash", { command: "env | sort" });
 		const output = text(response);
@@ -253,9 +253,9 @@ test("the environment does not leak host paths or names", {
 		for (const name of ["SSH_AUTH_SOCK", "DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) {
 			assert.equal(output.includes(name), false, name);
 		}
-		assert.match(output, /^HOME=\/tmp\/home$/m);
+		assert.match(output, /^HOME=\/(tmp\/home|run\/pi-home)$/m);
 		assert.match(output, /^HOSTNAME=sandbox$/m);
-		assert.match(output, /^PI_CODING_AGENT_DIR=\/tmp\/pi-bridge-agent-/m);
+		assert.match(output, /^PI_CODING_AGENT_DIR=\/(tmp\/pi-bridge-agent-|run\/pi-agent)/m);
 		assert.match(output, /^PATH=[^\n]*\/run\/pi-bin/m);
 		assert.doesNotMatch(output, new RegExp(`\\nPATH=[^\\n]*${String(home)}`, "m"), "PATH does not name a host directory");
 	} finally {

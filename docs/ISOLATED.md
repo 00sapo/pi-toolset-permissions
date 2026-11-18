@@ -2,7 +2,7 @@
 
 On Linux, `src/index.ts` delegates every tool call to a second Pi process inside a bubblewrap sandbox. The inner Pi uses no real model. A local OpenAI-compatible server supplies tool calls, and RPC returns results and supported dialogs.
 
-The executor follows the two sandbox layers of `/permissions`. The read-only layer denies writes to host files. The no-network layer denies outbound IP traffic. A process boundary is fixed when the process starts, so each layer combination uses its own process.
+The executor follows the two sandbox layers of `/permissions`. The filesystem layer has three states: `off` leaves the host tree open, `read` exposes only the project root and the extra paths, and `read+write` also permits writes there. The no-network layer denies outbound IP traffic. A process boundary is fixed when the process starts, so each layer combination, and each change to the allowed roots, uses its own process.
 
 The extension picks the boundary by platform. Linux uses this executor. macOS wraps `bash` only. Windows disables the layers. See [the sandboxes](../README.md#the-sandboxes).
 
@@ -41,10 +41,11 @@ The prototype reads the sandbox flags from the same state file as `/permissions`
 
 | Layers | Result |
 |---|---|
-| read-only and no network off | Host tools answer. No inner process starts. |
-| read-only on | Host files are read-only in the inner process. |
-| no network on | Outbound IP traffic fails in the inner process. Host files are writable. |
-| both on | Both restrictions apply in the same inner process. |
+| filesystem off, no network off | Host tools answer. No inner process starts. |
+| filesystem read | Only the project and the extra paths are readable. Writes there fail. |
+| filesystem read+write | The project and the extra paths are readable and writable. |
+| no network on | Outbound IP traffic fails in the inner process. |
+| filesystem off with no network on | Every host file stays readable and writable, and the network is still blocked. |
 
 When you change a combination, the prototype stops the inner process and starts one that matches the new layers. The tool call that triggers the change waits for the new process. A call never runs on the host while a layer is on.
 
@@ -77,7 +78,7 @@ The sandbox starts with an empty root. Only these paths become visible:
 | Node.js, Pi, and their bin directories | read-only | The inner process. |
 | `/run/pi-bin` | symlinks | `node` and `pi` under a sandbox path, so `PATH` names no host directory. |
 | The relay file | read-only | The program that connects the inner Pi to the control socket. |
-| The working directory | read-only or writable | The project. The read-only layer decides the mode. |
+| The working directory | follows the filesystem state | The project root. `read` mounts it read-only, `read+write` mounts it writable. |
 | Each path from `--inner-extensions` | read-only | The loaded extensions. |
 | The git directory of a worktree | follows the read-only layer | Git needs it, and git writes its index there. |
 | `/tmp`, `/run`, `/dev`, `/proc`, and the home directory | private and empty | Temporary files, the control socket, devices, processes, and `HOME`. |
@@ -87,7 +88,9 @@ Everything else stays outside the view. That includes the rest of your home dire
 
 The sandbox has its own IPC and host-name namespaces. The host name inside is always `sandbox`. The environment names no host directory: `PATH` uses `/run/pi-bin`, and `HOME` is `/tmp/home`.
 
-The read-only layer does not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host.
+The restricted states do not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host. A write outside the allowed roots can therefore report success and still leave the host file unchanged.
+
+With `filesystem off`, `/run` stays private because the bridge socket and the agent directory live there. The rest of the host tree is mounted writable.
 
 ## Limits
 

@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext, Tool } from "@earendil-works/pi-co
 import { createCodingTools } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { IsolatedRunner } from "./isolated-runner.ts";
 import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
@@ -76,6 +77,26 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 		if (current) await current.close();
 	}
 
+	/**
+	 * The roots that the layer may reach. A missing path is skipped instead of thrown, because
+	 * a removable disk can disappear and that must not stop Pi or block every call.
+	 */
+	function allowedRoots(ctx: ExtensionContext): string[] {
+		const found: string[] = [];
+		for (const path of [ctx.cwd, ...store.get().extra_paths]) {
+			try {
+				found.push(realpathSync(path));
+			} catch {
+				// A path that no longer exists cannot be a root.
+			}
+		}
+		return [...new Set(found)];
+	}
+
+	function configurationKey(ctx: ExtensionContext, layers: SandboxLayers): string {
+		return layerKey(layers, layers.filesystem === "off" ? [] : allowedRoots(ctx));
+	}
+
 	/** The running executor for these layers. It starts one if the combination needs it. */
 	async function ensureRunner(ctx: ExtensionContext, layers: SandboxLayers): Promise<IsolatedRunner | undefined> {
 		if (!layersActive(layers)) {
@@ -86,7 +107,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			status(undefined);
 			return undefined;
 		}
-		const key = layerKey(layers);
+		const key = configurationKey(ctx, layers);
 		if (runner && runnerKey === key) return runner;
 		if (starting) {
 			await starting;
@@ -105,7 +126,8 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 				const started = await IsolatedRunner.start({
 					cwd: ctx.cwd,
 					extensions: extensionPaths().map((path) => resolve(ctx.cwd, path)),
-					readonly: layers.readonly_bash,
+					filesystem: layers.filesystem,
+					paths: allowedRoots(ctx),
 					network: layers.no_network,
 					piPath: pi.getFlag("inner-pi") as string | undefined,
 					nodePath: pi.getFlag("inner-node") as string | undefined,
@@ -115,7 +137,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 					},
 				});
 				// The layers can change while the process starts.
-				if (layerKey(store.get().sandboxes) !== key) {
+				if (configurationKey(ctx, store.get().sandboxes) !== key) {
 					await started.runner.close();
 					return;
 				}
@@ -193,7 +215,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			layers = { ...store.get().sandboxes };
 		}
 		// A changed combination restarts the process now, so this call waits instead of failing.
-		if (layersActive(layers) && runnerKey !== layerKey(layers)) void ensureRunner(ctx, layers);
+		if (runnerKey !== configurationKey(ctx, layers)) void ensureRunner(ctx, layers);
 		return undefined;
 	});
 

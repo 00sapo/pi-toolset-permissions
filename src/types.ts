@@ -24,9 +24,11 @@ export interface Toolset {
 	builtin: boolean;
 }
 
+export type FilesystemMode = "off" | "read" | "read+write";
+
 export interface SandboxFlags {
-	/** Reject bash commands that can change the filesystem. */
-	readonly_bash: boolean;
+	/** Restrict filesystem access to the allowed roots when enabled. */
+	filesystem: FilesystemMode;
 	/** Reject bash commands that can reach the network. */
 	no_network: boolean;
 }

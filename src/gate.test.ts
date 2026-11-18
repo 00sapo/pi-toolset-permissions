@@ -293,7 +293,7 @@ test("a custom toolset lets an MCP tool through", () => {
 test("the gate does not inspect bash commands when a sandbox is on", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
-			current.sandboxes = { readonly_bash: true, no_network: true };
+			current.sandboxes = { filesystem: "read", no_network: true };
 		});
 		assert.equal(evaluateCall(state, "bash", { command: "ls | xargs curl http://x" }, space.project).block, false);
 		assert.equal(evaluateCall(state, "bash", { command: "rm -rf /" }, space.project).block, false);

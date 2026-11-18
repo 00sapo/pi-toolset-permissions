@@ -1,5 +1,8 @@
-import { accessSync, constants } from "node:fs";
-import { delimiter, join } from "node:path";
+import { accessSync, constants, realpathSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
+import { accountFiles, canonicalRoots, containsPath, etcMounts, gitDirectories, systemMounts } from "./isolated-launcher.ts";
+import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
 import type { PermissionsState, SandboxFlags } from "./types.ts";
 
 export interface SandboxInfo {
@@ -10,9 +13,9 @@ export interface SandboxInfo {
 
 export const SANDBOXES: SandboxInfo[] = [
 	{
-		key: "readonly_bash",
-		label: "Read-only filesystem",
-		description: "Run bash with a read-only filesystem (bubblewrap, or Seatbelt on macOS).",
+		key: "filesystem",
+		label: "Filesystem",
+		description: "Limit filesystem access to the project and extra paths. Read permits reads only. Read+write permits reads and writes.",
 	},
 	{
 		key: "no_network",
@@ -69,58 +72,79 @@ export function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/** Seatbelt profile: allow by default, then deny writes and the network. */
-export function seatbeltProfile(state: PermissionsState): string {
-	const rules = ["(version 1)", "(allow default)"];
-	if (state.sandboxes.readonly_bash) {
-		rules.push("(deny file-write*)");
-		for (const device of ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"]) {
-			rules.push(`(allow file-write* (literal "${device}"))`);
-		}
-	}
-	if (state.sandboxes.no_network) rules.push("(deny network*)");
-	return rules.join("");
+/** Restrict reads and writes to explicit roots and runtime paths. */
+export function seatbeltProfile(state: PermissionsState, cwd = process.cwd()): string {
+ const rules = ["(version 1)", "(allow default)"];
+ if (state.sandboxes.filesystem !== "off") {
+  const roots = canonicalRoots([cwd, ...state.extra_paths]);
+  const quote = (path: string) => JSON.stringify(path);
+  rules.push("(deny file-read*)", "(deny file-write*)");
+  for (const root of roots) {
+   rules.push(`(allow file-read* (subpath ${quote(root)}))`);
+   if (state.sandboxes.filesystem === "read+write") rules.push(`(allow file-write* (subpath ${quote(root)}))`);
+  }
+  for (const path of ["/System", "/usr", "/bin", "/sbin", "/Library/Apple", "/Library/Frameworks", "/private/etc/ssl", "/private/var/db/dyld"]) {
+   rules.push(`(allow file-read* (subpath ${quote(path)}))`);
+  }
+  const executableDirs = new Set([dirname(realpathSync(process.execPath))]);
+  const pi = findExecutable("pi");
+  if (pi) executableDirs.add(dirname(realpathSync(pi)));
+  for (const path of executableDirs) rules.push(`(allow file-read* (subpath ${quote(path)}))`);
+  const agent = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+  for (const file of ["settings.json", "models.json"]) rules.push(`(allow file-read* (literal ${quote(join(agent,file))}))`);
+  rules.push(`(allow file-read* file-write* (subpath ${quote(join(agent,"sessions"))}))`);
+  rules.push(`(allow file-read* file-write* (literal ${quote(join(agent,"settings.json"))}))`);
+  for (const path of ["/private/etc/localtime", "/private/etc/resolv.conf", "/private/etc/hosts", "/dev/null", "/dev/urandom", "/dev/random", "/dev/tty"]) {
+   rules.push(`(allow file-read* (literal ${quote(path)}))`);
+  }
+  for (const path of ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"]) rules.push(`(allow file-write* (literal ${quote(path)}))`);
+ }
+ if (state.sandboxes.no_network) rules.push("(deny network*)");
+ return rules.join("");
 }
 
-function macOSPlan(command: string, state: PermissionsState, tools: SandboxTools): SandboxPlan {
+function macOSPlan(command: string, state: PermissionsState, tools: SandboxTools, cwd: string): SandboxPlan {
 	if (tools.sandboxExec === null) {
 		return {
 			error:
 				"The sandboxes need sandbox-exec on macOS. It is missing on this system, so the command did not run. Turn the sandbox off in /permissions.",
 		};
 	}
-	const profile = seatbeltProfile(state);
+	const profile = seatbeltProfile(state, cwd);
 	const inner = `${shellQuote(tools.shell)} -lc ${shellQuote(command)}`;
 	return {
 		command: `${shellQuote(tools.sandboxExec)} -p ${shellQuote(profile)} ${inner}`,
 	};
 }
 
-function linuxPlan(command: string, state: PermissionsState, tools: SandboxTools): SandboxPlan {
-	const inner = `${shellQuote(tools.shell)} -lc ${shellQuote(command)}`;
-	if (tools.bwrap !== null) {
-		const bind = state.sandboxes.readonly_bash ? "--ro-bind / /" : "--bind / /";
-		const net = state.sandboxes.no_network ? " --unshare-net" : "";
-		return {
-			command: `${shellQuote(tools.bwrap)} ${bind} --dev /dev --proc /proc${net} --die-with-parent -- ${inner}`,
-		};
-	}
-
-	if (state.sandboxes.readonly_bash) {
-		return {
-			error:
-				"The read-only filesystem sandbox needs bubblewrap (bwrap). Install bubblewrap, or turn the sandbox off in /permissions.",
-		};
-	}
-
-	if (tools.unshare !== null) {
-		return { command: `${shellQuote(tools.unshare)} -n -- ${inner}` };
-	}
-
-	return {
-		error:
-			"The no-network sandbox needs bubblewrap (bwrap) or unshare. Install one, or turn the sandbox off in /permissions.",
-	};
+function linuxPlan(command: string, state: PermissionsState, tools: SandboxTools, cwd: string): SandboxPlan {
+ let inner = `${shellQuote(tools.shell)} -lc ${shellQuote(command)}`;
+ if (tools.bwrap !== null) {
+  if (state.sandboxes.filesystem === "off") {
+   const net = state.sandboxes.no_network ? " --unshare-net" : "";
+   return {command: `${shellQuote(tools.bwrap)} --bind / / --dev /dev --proc /proc${net} --die-with-parent -- ${inner}`};
+  }
+  const roots = canonicalRoots([cwd, ...state.extra_paths]);
+  const workdir = realpathSync(cwd);
+  const args = ["--tmpfs", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/etc"];
+  const system = systemMounts();
+  for (const bind of system.binds) args.push("--ro-bind", bind.source, bind.target);
+  for (const link of system.symlinks) args.push("--symlink", link.target, link.path);
+  for (const entry of etcMounts()) args.push("--ro-bind", entry.source, entry.target);
+  const readText = (path: string) => {try {return readFileSync(path,"utf8");} catch {return null;}};
+  const metadata = canonicalRoots(gitDirectories(workdir,readText));
+  for (const path of [...new Set([...roots,...metadata])].sort()) args.push(state.sandboxes.filesystem === "read" ? "--ro-bind" : "--bind", path,path);
+  const shell = realpathSync(tools.shell);
+  if (!system.binds.some(b=>containsPath(b.source,shell))) args.push("--ro-bind", dirname(shell),dirname(shell));
+  args.push("--dir", "/run/pi-home", "--setenv", "HOME", "/run/pi-home", "--chdir", workdir, "--die-with-parent");
+  if (state.sandboxes.no_network) args.push("--unshare-net");
+  const accounts = accountFiles(process.getuid?.() ?? 1000,process.getgid?.() ?? 1000).map(f=>`printf %s ${shellQuote(f.content)} > /etc/${f.name}`).join("; ");
+  inner = `${shellQuote(tools.shell)} -c ${shellQuote(`${accounts}; exec ${inner}`)}`;
+  return {command: `${shellQuote(tools.bwrap)} ${args.map(shellQuote).join(" ")} -- ${inner}`};
+ }
+ if (state.sandboxes.filesystem !== "off") return {error:"The filesystem sandbox needs bubblewrap (bwrap). Install bubblewrap, or turn the sandbox off in /permissions."};
+ if (tools.unshare !== null) return {command: `${shellQuote(tools.unshare)} -n -- ${inner}`};
+ return {error:"The no-network sandbox needs bubblewrap (bwrap) or unshare. Install one, or turn the sandbox off in /permissions."};
 }
 
 /**
@@ -132,8 +156,9 @@ export function wrapBash(
 	command: string,
 	state: PermissionsState,
 	tools: SandboxTools = detectSandboxTools(),
+ cwd = process.cwd(),
 ): SandboxPlan {
-	if (!state.sandboxes.readonly_bash && !state.sandboxes.no_network) return null;
+	if (state.sandboxes.filesystem === "off" && !state.sandboxes.no_network) return null;
 
 	if (tools.platform === "win32") {
 		return {
@@ -141,8 +166,12 @@ export function wrapBash(
 				"Native Windows has no sandbox backend in this extension, so the command did not run. Run pi inside WSL2 to use bubblewrap, or turn the sandbox off in /permissions.",
 		};
 	}
-	if (tools.platform === "darwin") return macOSPlan(command, state, tools);
-	if (tools.platform === "linux") return linuxPlan(command, state, tools);
+	try {
+  if (tools.platform === "darwin") return macOSPlan(command, state, tools, cwd);
+  if (tools.platform === "linux") return linuxPlan(command, state, tools, cwd);
+ } catch (error) {
+  return {error: `The filesystem sandbox did not start: ${error instanceof Error ? error.message : String(error)}`};
+ }
 
 	return {
 		error: `The sandboxes are not available on ${tools.platform}, so the command did not run. Turn the sandbox off in /permissions.`,

@@ -34,7 +34,7 @@ On Linux, this extension delegates tool execution to a sandboxed Pi process, so 
 - Four toolsets that ship with the extension: read, write, execute, and permissions.
 - Editable patterns. Press enter on a toolset to see its regular expressions and the tools that they match.
 - Custom toolsets that match tool names with regular expressions.
-- Two bash sandboxes: a read-only filesystem and no network.
+- Two sandboxes: a filesystem layer with off, read, and read+write states, and a no-network layer.
 - One path scope for the file tools.
 - One `permissions` tool for the model. Each change asks you to agree.
 - One question for each tool that no toolset matches.
@@ -95,7 +95,7 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
      permissions             [ON] 1 pattern
 
  Sandboxes
-     Read-only filesystem    [OFF]
+     Filesystem              [OFF]
      No network              [OFF]
 
  Scope
@@ -129,7 +129,7 @@ The default state:
 | Permission toolset | on |
 | Path scope | project |
 | Extra paths | none |
-| Read-only filesystem sandbox | off |
+| Filesystem sandbox | off |
 | No-network sandbox | off |
 
 The write toolset is off at the start. Turn it on before the model can change files with the write and edit tools.
@@ -243,7 +243,23 @@ On Windows a layer that a saved file still holds is turned off at startup, so a 
 
 A sandbox does not read the command text.
 
-The read-only sandbox makes the filesystem read-only. On Linux the sandbox covers every tool, so every write fails, including writes to `/tmp`.
+### The filesystem layer
+
+The Filesystem layer limits which directories a tool can reach. It has three states.
+
+| State | Read | Write |
+|---|---|---|
+| `off` | everywhere | everywhere, the host included |
+| `read` | the project root and the extra paths | nowhere outside the sandbox itself |
+| `read+write` | the project root and the extra paths | the project root and the extra paths |
+
+The project root is the working directory. The extra paths are the directories in the Paths section of the screen. Nothing else outside those roots is readable.
+
+The layer needs the project scope. When you set the scope to everywhere, the extension sets the layer to `off` and disables its row in the screen, because the saved roots no longer describe the tree that the layer would allow.
+
+Pi keeps a small set of runtime paths in every state: its own agent directory, its private temporary directory, the programs that run it, and the system directories that programs read. Those paths stay writable where Pi needs them, so a session and its configuration keep working.
+
+A write outside the roots can report success inside the sandbox and still never reach the host. Make sure that the host file is the one you check.
 
 The no-network sandbox removes network access. Name resolution also fails.
 
@@ -251,7 +267,7 @@ You can turn on both sandboxes at once.
 
 If a program that a sandbox needs is missing, the tool call fails with a message. The call never starts without the sandbox.
 
-A sandbox does not change a toolset, and a toolset does not change a sandbox. Turn on the read-only sandbox when a tool must not change files.
+A sandbox does not change a toolset, and a toolset does not change a sandbox. Set the filesystem layer to `read` when a tool must not change files.
 
 Commands that you type with `!` are not sandboxed. A sandbox covers only the tools that the model calls.
 
@@ -269,7 +285,7 @@ The model uses one tool with nine actions.
 | add_toolset | name, patterns | add a custom toolset |
 | remove_toolset | name | delete a custom toolset |
 | set_toolset | name, mode | set a toolset to off, on, or ask |
-| set_sandbox | sandbox, enabled | turn a sandbox on or off |
+| set_sandbox | sandbox, mode or enabled | set the filesystem state, or turn the no-network layer on or off |
 
 The `status` action only reads. State changes and `request_tool` require your approval.
 

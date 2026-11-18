@@ -35,7 +35,7 @@ test("defaults match the sketch", () => {
 	assert.equal(state.version, 2);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, []);
-	assert.deepEqual(state.sandboxes, { readonly_bash: false, no_network: false });
+	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
 	assert.deepEqual(
 		state.toolsets.map((toolset) => [toolset.name, toolset.enabled, toolset.builtin]),
 		[
@@ -68,7 +68,7 @@ test("mergeState repairs garbage", () => {
 	assert.equal(state.version, 2);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, ["/abs/one"]);
-	assert.deepEqual(state.sandboxes, { readonly_bash: false, no_network: false });
+	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
 	assert.equal(state.toolsets.length, 4);
 });
 
@@ -80,7 +80,7 @@ test("mergeState keeps valid recognized fields", () => {
 	});
 	assert.equal(state.scope, "everywhere");
 	assert.deepEqual(state.extra_paths, ["/tmp/work"]);
-	assert.deepEqual(state.sandboxes, { readonly_bash: true, no_network: true });
+	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: true });
 });
 
 test("mergeState drops a toolset with an invalid regex", () => {
@@ -429,4 +429,38 @@ test("version 2 persists all three modes for builtin and custom toolsets", () =>
 test("version 2 boolean states retain their modes", () => {
 	const state = defaultState();
 	assert.deepEqual(mergeState(JSON.parse(JSON.stringify(state))), state);
+});
+
+for (const filesystem of ["off", "read", "read+write"] as const) {
+ test(`filesystem ${filesystem} survives project normalization`, () => {
+  assert.equal(mergeState({ sandboxes: { filesystem } }).sandboxes.filesystem, filesystem);
+ });
+ test(`everywhere coerces filesystem ${filesystem} off`, () => {
+  assert.equal(mergeState({ scope: "everywhere", sandboxes: { filesystem } }).sandboxes.filesystem, "off");
+ });
+}
+test("legacy readonly migration only applies when filesystem is absent", () => {
+ assert.equal(mergeState({ sandboxes: { readonly_bash: true } }).sandboxes.filesystem, "read");
+ assert.equal(mergeState({ sandboxes: { readonly_bash: false } }).sandboxes.filesystem, "off");
+ for (const filesystem of ["off", "read", "read+write"]) {
+  assert.equal(mergeState({ sandboxes: { filesystem, readonly_bash: true } }).sandboxes.filesystem, filesystem);
+ }
+ // An unknown value must never fall back to the unrestricted state.
+ for (const filesystem of ["invalid", "Read", "readonly", false, null]) {
+  assert.equal(mergeState({ sandboxes: { filesystem, readonly_bash: false } }).sandboxes.filesystem, "read", String(filesystem));
+ }
+ assert.equal(mergeState({ scope: "everywhere", sandboxes: { readonly_bash: true } }).sandboxes.filesystem, "off");
+});
+test("store updates and loads reset filesystem for everywhere scope", () => {
+ withTempDir((dir) => {
+  const file = join(dir, "permissions.json");
+  const store = new StateStore(file);
+  store.update((state) => ({ ...state, sandboxes: { filesystem: "read+write", no_network: true } }));
+  assert.equal(store.update((state) => ({ ...state, scope: "everywhere" })).sandboxes.filesystem, "off");
+  assert.equal(store.update((state) => ({ ...state, sandboxes: { ...state.sandboxes, filesystem: "read" } })).sandboxes.filesystem, "off");
+  assert.equal(store.get().sandboxes.no_network, true);
+  writeFileSync(file, JSON.stringify({ scope: "everywhere", sandboxes: { filesystem: "read+write" } }));
+  assert.equal(store.reload().sandboxes.filesystem, "off");
+  assert.equal(new StateStore(file).get().sandboxes.filesystem, "off");
+ });
 });

@@ -6,12 +6,12 @@ import { HOST_NAME, accountFiles, buildIsolatedLaunch, parentDirectories, system
 
 const options = {
 	socketPath: "/tmp/private bridge/model.sock", token: "test-token", cwd: "/workspace/project",
-	extensions: ["./extension one.ts", "/opt/extensions/two.ts"], readonly: true, network: true,
+	extensions: ["./extension one.ts", "/opt/extensions/two.ts"], filesystem: "read" as const, paths: ["/workspace/project"], network: true,
 };
 
 /** A host layout with a merged `/usr`, the usual Linux shape since merged-usr. */
 const hostExists = (path: string): boolean =>
-	["/usr", "/etc", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/etc/ssl", "/bin", "/sbin", "/lib", "/lib64", "/tmp", "/run", "/dev", "/proc"].includes(path);
+	["/usr", "/etc", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/etc/ssl/certs", "/bin", "/sbin", "/lib", "/lib64", "/tmp", "/run", "/dev", "/proc"].includes(path);
 const hostLinks: Record<string, string> = { "/bin": "usr/bin", "/sbin": "usr/sbin", "/lib": "usr/lib", "/lib64": "usr/lib64" };
 
 const dependencies = {
@@ -29,7 +29,7 @@ const mounts = (args: string[]): Array<{ mode: string; source: string; target: s
 	const found: Array<{ mode: string; source: string; target: string }> = [];
 	const body = args.slice(0, args.indexOf("--"));
 	for (let index = 0; index < body.length; index += 1) {
-		if (body[index] === "--ro-bind" || body[index] === "--bind") {
+		if (body[index] === "--ro-bind" || body[index] === "--bind" || body[index] === "--dev-bind") {
 			found.push({ mode: body[index], source: body[index + 1], target: body[index + 2] });
 			index += 2;
 		}
@@ -67,17 +67,17 @@ test("home, credentials, and other users stay out of the sandbox", () => {
 test("only the system directories, the executables, the project, and the extensions are mounted", () => {
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	assert.deepEqual(mounts(args).map((bind) => bind.source).sort(), [
-		"/etc/nsswitch.conf", "/etc/ssl", "/opt/extensions/two.ts", "/opt/pi/bin", "/opt/pi/bin/pi", "/usr", "/usr/bin",
+		"/etc/nsswitch.conf", "/etc/ssl/certs", "/opt/extensions/two.ts", "/opt/pi/bin", "/opt/pi/bin/pi", "/usr", "/usr/bin",
 		"/usr/bin/node", relay, "/workspace/project", "/workspace/project/extension one.ts", options.socketPath,
 	].sort());
 });
 
 test("the project mount follows the read-only layer and the extensions stay read-only", () => {
-	for (const readonly of [true, false]) {
-		const { args } = buildIsolatedLaunch({ ...options, readonly }, dependencies);
+	for (const filesystem of ["read", "read+write"] as const) {
+		const { args } = buildIsolatedLaunch({ ...options, filesystem }, dependencies);
 		const found = mounts(args);
 		const project = found.find((bind) => bind.source === "/workspace/project");
-		assert.equal(project?.mode, readonly ? "--ro-bind" : "--bind");
+		assert.equal(project?.mode, filesystem === "read" ? "--ro-bind" : "--bind");
 		for (const path of ["/workspace/project/extension one.ts", "/opt/extensions/two.ts", "/opt/pi/bin/pi", "/usr/bin/node", relay]) {
 			assert.equal(found.find((bind) => bind.source === path)?.mode, "--ro-bind", path);
 		assert.equal(found.find((bind) => bind.source === "/usr/bin")?.mode, "--ro-bind", "/usr/bin");
@@ -115,7 +115,7 @@ test("process IDs, the socket, and the agent directory stay private in both mode
 		assert.ok(sandboxArgs.includes("--new-session"));
 		const socket = mounts(args).find((bind) => bind.source === options.socketPath);
 		assert.deepEqual(socket, { mode: "--ro-bind", source: options.socketPath, target: sandboxSocket });
-		assert.equal(env.PI_CODING_AGENT_DIR, "/run/pi-agent");
+		assert.equal(env.PI_CODING_AGENT_DIR, "/run/pi-agent-private");
 		assert.equal(args.includes("/run/pi-agent"), true);
 	}
 });
@@ -162,22 +162,22 @@ test("rejects a non-boolean layer instead of guessing a default", () => {
 	for (const network of [undefined, null, 0, 1, "true", "false", {}, []]) {
 		assert.throws(() => buildIsolatedLaunch({ ...options, network } as any, dependencies), /network must be a boolean/, String(network));
 	}
-	for (const readonly of [undefined, null, 0, 1, "true"]) {
-		assert.throws(() => buildIsolatedLaunch({ ...options, readonly } as any, dependencies), /readonly must be a boolean/, String(readonly));
+	for (const filesystem of [undefined, null, 0, 1, "true"]) {
+		assert.throws(() => buildIsolatedLaunch({ ...options, filesystem } as any, dependencies), /filesystem/, String(filesystem));
 	}
 });
 
 test("environment is an allowlist, not inherited credentials or loader settings", () => {
 	const plan = buildIsolatedLaunch(options, dependencies);
 	assert.deepEqual(plan.env, {
-		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/tmp/home", LANG: "C.UTF-8", TERM: "xterm",
-		PI_TOOLSET_INNER: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
-		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent", HOSTNAME: HOST_NAME,
+		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/run/pi-home", LANG: "C.UTF-8", TERM: "xterm",
+		PI_TOOLSET_INNER: "1", PI_BRIDGE_GENERATE_ACCOUNTS: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
+		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent-private", HOSTNAME: HOST_NAME,
 	});
 	assert.deepEqual(buildIsolatedLaunch(options, { ...dependencies, env: {} }).env, {
-		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/tmp/home", LANG: "C.UTF-8", TERM: "dumb",
-		PI_TOOLSET_INNER: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
-		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent", HOSTNAME: HOST_NAME,
+		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/run/pi-home", LANG: "C.UTF-8", TERM: "dumb",
+		PI_TOOLSET_INNER: "1", PI_BRIDGE_GENERATE_ACCOUNTS: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
+		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent-private", HOSTNAME: HOST_NAME,
 	});
 	if (hostname() !== HOST_NAME) assert.equal(JSON.stringify(plan).includes(hostname()), false, "the host name must not reach the sandbox");
 	for (const name of ["OPENAI_API_KEY", "NODE_OPTIONS", "HTTP_PROXY", "LD_PRELOAD", "PI_CODING_AGENT_DIR_HOST"]) {
@@ -210,7 +210,7 @@ test("rejects invalid socket, cwd, token, and extension arguments", () => {
 });
 
 test("refuses to mount a path that belongs to the sandbox itself", () => {
-	assert.throws(() => buildIsolatedLaunch({ ...options, cwd: "/tmp", extensions: [] }, dependencies), /belongs to the sandbox/);
+	assert.throws(() => buildIsolatedLaunch({ ...options, cwd: "/run", paths: ["/run"], extensions: [] }, dependencies), /protected path/);
 });
 
 test("does not mutate caller input or dependencies", () => {
@@ -225,12 +225,14 @@ test("a worktree git directory outside the project is mounted read-only", () => 
 		"/repo/.git/worktrees/project/commondir": "../..\n",
 	};
 	const readText = (path: string) => files[path] ?? null;
-	const { args } = buildIsolatedLaunch(options, { ...dependencies, readText });
+	const gitPaths = new Set(["/repo/.git/worktrees/project/HEAD", "/repo/.git/worktrees/project/commondir", "/repo/.git/objects"]);
+	const gitLayout = { ...dependencies, readText, exists: (path: string) => gitPaths.has(path) || hostExists(path) };
+	const { args } = buildIsolatedLaunch(options, gitLayout);
 	const found = mounts(args);
 	for (const path of ["/repo/.git/worktrees/project", "/repo/.git"]) {
 		assert.deepEqual(found.find((bind) => bind.source === path), { mode: "--ro-bind", source: path, target: path }, path);
 	}
-	const open = buildIsolatedLaunch({ ...options, readonly: false }, { ...dependencies, readText });
+	const open = buildIsolatedLaunch({ ...options, filesystem: "read+write" }, gitLayout);
 	const writable = mounts(open.args).find((bind) => bind.source === "/repo/.git/worktrees/project");
 	assert.equal(writable?.mode, "--bind", "git must be writable when the read-only layer is off");
 });
@@ -269,4 +271,75 @@ test("missing /etc entries are skipped instead of failing the launch", () => {
 	assert.equal(mounts(args).some((bind) => bind.source === "/etc/nsswitch.conf"), false);
 	const at = args.indexOf("/etc");
 	assert.equal(args[at - 1], "--tmpfs", "/etc is still an empty directory");
+});
+
+ test("off binds the host root writable even with network isolation", () => {
+ const {args} = buildIsolatedLaunch({...options, filesystem: "off"}, dependencies);
+ // `--dev-bind` keeps device nodes usable. A plain `--bind` of the root makes an
+ // executable spawn fail with EACCES inside the sandbox.
+ assert.deepEqual(mounts(args).find(x => x.target === "/"), {mode: "--dev-bind", source: "/", target: "/"});
+ assert.ok(args.includes("--unshare-net"));
+ assert.equal(args.includes("/etc"), false);
+ assert.equal(args.includes("/tmp"), false);
+ });
+ test("custom roots canonicalize and follow the selected mode", () => {
+ for (const filesystem of ["read", "read+write"] as const) {
+ const {args} = buildIsolatedLaunch({...options, filesystem, paths:[options.cwd,"/alias"]}, {...dependencies, realPath:p=>p === "/alias" ? "/data/custom" : p});
+ assert.equal(mounts(args).find(x=>x.source === "/data/custom")?.mode, filesystem === "read" ? "--ro-bind" : "--bind");
+ assert.equal(args.includes("/alias"),false);
+ }
+ });
+ test("restricted roots reject protected ancestors and descendants", () => {
+ for (const path of ["/", "/run", "/run/host", "/proc/self", "/dev", "/usr", "/usr/local", "/etc", "/etc/passwd"]) {
+ assert.throws(()=>buildIsolatedLaunch({...options, paths:[options.cwd,path]},dependencies), /sandbox|protected|off/);
+ }
+ assert.throws(()=>buildIsolatedLaunch({...options, paths:["/alias"]},{...dependencies, realPath:p=>p === "/alias" ? "/run/secrets" : p}), /sandbox|protected/);
+ });
+ test("cwd must belong to an allowed root", () => {
+ assert.throws(()=>buildIsolatedLaunch({...options,paths:["/other"]},dependencies), /cwd/);
+ });
+
+test("live bwrap enforces scoped roots and leaves off mode host files writable", async (t) => {
+ const {spawnSync} = await import("node:child_process");
+ const {mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, rmSync} = await import("node:fs");
+ const {tmpdir} = await import("node:os");
+ const {join} = await import("node:path");
+ const probe = spawnSync("bwrap", ["--bind", "/", "/", "--unshare-net", "--", "/bin/true"], {encoding:"utf8"});
+ if (probe.status !== 0) return t.skip(`bubblewrap namespaces unavailable: ${probe.stderr ?? probe.error}`);
+ const dir = mkdtempSync(join(tmpdir(),"pi-scoped-backend-"));
+ const project = join(dir,"project"), custom = join(dir,"custom"), outside = join(dir,"outside");
+ for (const root of [project,custom,outside]) {mkdirSync(root);writeFileSync(join(root,"data"),"original");}
+ symlinkSync(join(outside,"data"),join(project,"escape"));
+ try {
+  for (const filesystem of ["read","read+write","off"] as const) {
+   const plan = buildIsolatedLaunch({socketPath:join(outside,"data"),token:"live-token",cwd:project,extensions:[],filesystem,paths:[project,custom],network:true,piPath:process.execPath,nodePath:process.execPath});
+   const script = `const fs=require('fs'); const roots=${JSON.stringify([project,custom,outside])}; const mode=${JSON.stringify(filesystem)}; for(let i=0;i<roots.length;i++){const p=roots[i]+'/data'; let readable=true;try{fs.readFileSync(p)}catch{readable=false} if(readable !== (mode==='off'||i<2))process.exit(10+i);let writable=true;try{fs.writeFileSync(p,'changed')}catch{writable=false}if(writable !== (mode==='off'||(mode==='read+write'&&i<2)))process.exit(20+i);} if(mode!=='off'&&fs.existsSync(roots[0]+'/escape'))process.exit(30);`;
+   const args = [...plan.args.slice(0,plan.args.indexOf("--")),"--",process.execPath,"-e",script];
+   const result = spawnSync(plan.command,args,{env:plan.env,encoding:"utf8"});
+   assert.equal(result.status,0,`${filesystem}: ${result.stderr}`);
+  }
+  assert.equal(readFileSync(join(outside,"data"),"utf8"),"changed");
+ } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test("a crafted .git pointer cannot mount an arbitrary host directory", () => {
+	const files: Record<string, string> = {
+		"/workspace/project/.git": "gitdir: /home/alice/.ssh\n",
+	};
+	const { args } = buildIsolatedLaunch(options, { ...dependencies, readText: (path) => files[path] ?? null, exists: (path) => path !== "/home/alice/.ssh/HEAD" });
+	assert.deepEqual(mounts(args).filter((bind) => bind.source.includes("alice")), []);
+});
+
+test("a real worktree git directory is still mounted", () => {
+	const files: Record<string, string> = {
+		"/workspace/project/.git": "gitdir: /repo/.git/worktrees/project\n",
+		"/repo/.git/worktrees/project/commondir": "../..\n",
+	};
+	const real = new Set(["/repo/.git/worktrees/project/HEAD", "/repo/.git/worktrees/project/commondir", "/repo/.git/objects"]);
+	const { args } = buildIsolatedLaunch(options, {
+		...dependencies, readText: (path) => files[path] ?? null, exists: (path) => real.has(path) || hostExists(path),
+	});
+	const sources = mounts(args).map((bind) => bind.source);
+	assert.ok(sources.includes("/repo/.git/worktrees/project"), "the worktree git directory is mounted");
+	assert.ok(sources.includes("/repo/.git"), "the shared object directory is mounted");
 });

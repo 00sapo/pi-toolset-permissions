@@ -3,7 +3,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { StateStore } from "./state.ts";
+import { mergeState, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 
 // Approximate terminal cells for these fixtures: CJK and emoji are wide,
@@ -70,32 +70,33 @@ type Screen = {
 	invalidate(): void;
 };
 
-async function screenFixture() {
+async function screenFixture(scope: "project" | "everywhere" = "everywhere", platform: NodeJS.Platform = "linux") {
 	const longName = "界🧪e\u0301".repeat(24);
 	const patterns = ["^界🧪e\u0301" + "長".repeat(80), "^second_", "^third_"];
 	let state: PermissionsState = {
 		version: 2,
-		scope: "everywhere",
+		scope,
 		extra_paths: ["/extra/" + "資料🧪e\u0301/".repeat(30)],
 		toolsets: [
 			{ name: longName, patterns, enabled: "ask", builtin: false },
 			{ name: "second", patterns: ["^second_"], enabled: true, builtin: true },
 		],
-		sandboxes: { readonly_bash: true, no_network: false },
+		sandboxes: { filesystem: "off", no_network: false },
 	};
+	const notifications: string[] = [];
 	const edits: Array<{ title: string; value: string }> = [];
 	let screen!: Screen;
 	let renders = 0;
 	let closed = false;
 	const store = {
 		get: () => state,
-		update: (change: (current: PermissionsState) => PermissionsState) => { state = change(state); },
+		update: (change: (current: PermissionsState) => PermissionsState) => { const next = change(state); state = { ...next, sandboxes: mergeState(next).sandboxes }; },
 	} as StateStore;
 	const ctx = {
 		mode: "tui",
 		cwd: "/project/" + "研究🧪e\u0301/".repeat(30),
 		ui: {
-			notify: () => assert.fail("Unexpected notification"),
+			notify: (text: string) => notifications.push(text),
 			editor: async (title: string, value: string) => {
 				edits.push({ title, value });
 				return undefined;
@@ -113,8 +114,8 @@ async function screenFixture() {
 			},
 		},
 	} as unknown as ExtensionContext;
-	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName]);
-	return { screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
+	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName], "all-tools", platform);
+	return { state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
 }
 
 function assertFits(screen: Screen, width: number): string[] {
@@ -185,3 +186,31 @@ for (const width of [83, 40, 20]) {
 		assert.equal(fixture.renders(), 7);
 	});
 }
+
+test("filesystem menu cycles modes and scope resets through the store", async () => {
+ const fixture = await screenFixture("project");
+ const { screen } = fixture;
+ screen.handleInput("j"); screen.handleInput("j");
+ for (const mode of ["read", "read+write", "off"]) {
+  screen.handleInput(" ");
+  await Promise.resolve();
+  assert.equal(fixture.state().sandboxes.filesystem, mode);
+  assert.match(assertFits(screen, 120).join("\n"), /Filesystem/);
+  assert.ok(assertFits(screen, 120).some((line) => line.includes(`[${mode.toUpperCase()}]`)));
+ }
+ screen.handleInput(" "); await Promise.resolve();
+ screen.handleInput("s");
+ assert.equal(fixture.state().scope, "everywhere");
+ assert.equal(fixture.state().sandboxes.filesystem, "off");
+ screen.handleInput(" "); await Promise.resolve();
+ assert.equal(fixture.state().sandboxes.filesystem, "off");
+ assert.match(fixture.notifications.join("\n"), /project scope/);
+ assert.match(assertFits(screen, 120).join("\n"), /project scope/);
+});
+test("Windows keeps filesystem disabled", async () => {
+ const fixture = await screenFixture("project", "win32");
+ fixture.screen.handleInput("j"); fixture.screen.handleInput("j"); fixture.screen.handleInput(" ");
+ await Promise.resolve();
+ assert.equal(fixture.state().sandboxes.filesystem, "off");
+ assert.match(fixture.notifications.join("\n"), /WSL2/);
+});

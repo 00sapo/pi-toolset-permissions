@@ -24,11 +24,11 @@ export function statusLine(
 	const head = `toolsets: ${on} on ${ask} ask ${state.toolsets.length - on - ask} off`;
 	const policy = platformPolicy(platform);
 	if (policy.plan === "disabled") return `${head} sandbox:disabled ${state.scope}`;
-	const active = SANDBOXES.filter((sandbox) => state.sandboxes[sandbox.key]).length;
-	if (active === 0) return `${head} sandboxes:off ${state.scope}`;
+	const active = SANDBOXES.filter((sandbox) => sandbox.key === "filesystem" ? state.sandboxes.filesystem !== "off" : state.sandboxes.no_network).length;
+	if (active === 0) return `${head} sandboxes:off filesystem:${state.sandboxes.filesystem} ${state.scope}`;
 	const depth = target === "all-tools" ? "all tools" : "bash only";
 	const warning = requiresBashOnly(policy) && target === "all-tools" ? " (bash only here)" : "";
-	return `${head} sandboxes:${active}/${SANDBOXES.length} ${depth}${warning} ${state.scope}`;
+	return `${head} sandboxes:${active}/${SANDBOXES.length} ${depth}${warning} filesystem:${state.sandboxes.filesystem} ${state.scope}`;
 }
 
 /** Compact text report of the current state. It always names the coverage and the platform. */
@@ -43,7 +43,7 @@ export function statusText(
 		lines.push(`  ${toolset.name} ${toolsetMode(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
 	}
 	lines.push(
-		`sandboxes: readonly_bash=${onOff(state.sandboxes.readonly_bash)} no_network=${onOff(state.sandboxes.no_network)}`,
+		`sandboxes: filesystem=${state.sandboxes.filesystem} no_network=${onOff(state.sandboxes.no_network)}`,
 	);
 	const policy = platformPolicy(platform);
 	lines.push(`sandbox coverage: ${policy.coverage}`);

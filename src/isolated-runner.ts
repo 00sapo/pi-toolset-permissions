@@ -1,3 +1,4 @@
+import type { FilesystemMode } from "./types.ts";
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -13,7 +14,8 @@ import { buildIsolatedLaunch } from "./isolated-launcher.ts";
 export interface IsolatedRunnerOptions {
 	cwd: string;
 	extensions: string[];
-	readonly: boolean;
+	filesystem: FilesystemMode;
+	paths: string[];
 	/** True isolates the network namespace. False keeps the host network. The caller always passes it. */
 	network: boolean;
 	piPath?: string;
@@ -63,7 +65,7 @@ export class IsolatedRunner {
 		const plan = buildIsolatedLaunch({
 			socketPath, token: this.bridge.token,
 			cwd: this.options.cwd, extensions: this.options.extensions,
-			readonly: this.options.readonly, network: this.options.network,
+			filesystem: this.options.filesystem, paths: this.options.paths, network: this.options.network,
 			piPath: this.options.piPath, nodePath: this.options.nodePath,
 		});
 		const child = spawn(plan.command, plan.args, { cwd: this.options.cwd, env: plan.env, stdio: "pipe" });

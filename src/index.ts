@@ -144,7 +144,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				"You can inspect PI_* environment variables for current model and session details.",
 			],
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
-				const plan = wrapBash(params.command, store.get());
+				const plan = wrapBash(params.command, store.get(), undefined, ctx.cwd);
 				if (plan !== null && "error" in plan) {
 					return {
 						content: [{ type: "text", text: plan.error }],
@@ -168,7 +168,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				...powershellDefinition,
 				promptSnippet: "Execute PowerShell commands",
 				async execute(toolCallId, params, signal, onUpdate, ctx) {
-					const plan = wrapBash(params.command, store.get());
+					const plan = wrapBash(params.command, store.get(), undefined, ctx.cwd);
 					if (plan !== null && "error" in plan) {
 						return {
 							content: [{ type: "text", text: plan.error }],
@@ -266,8 +266,8 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 			// Windows has no backend, so a saved layer must not keep blocking every shell call.
 			if (!layersEnabled(policy)) {
 				const layers = store.get().sandboxes;
-				if (layers.readonly_bash || layers.no_network) {
-					store.update((current) => ({ ...current, sandboxes: { readonly_bash: false, no_network: false } }));
+				if (layers.filesystem !== "off" || layers.no_network) {
+					store.update((current) => ({ ...current, sandboxes: { filesystem: "off", no_network: false } }));
 					if (ctx.hasUI) ctx.ui.notify(policy.reason ?? "The sandbox is disabled here.", "warning");
 				}
 				publish(ctx);

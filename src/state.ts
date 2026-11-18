@@ -1,14 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { PermissionsState, SandboxFlags, ScopeMode, Toolset } from "./types.ts";
+import type { PermissionsState, ScopeMode, Toolset } from "./types.ts";
 
 export const MAX_EXTRA_PATHS = 100;
 export const MAX_TOOLSETS = 50;
 export const MAX_TOOLSET_PATTERNS = 32;
 const MAX_PATTERN_LENGTH = 500;
-
-const SANDBOX_KEYS: Array<keyof SandboxFlags> = ["readonly_bash", "no_network"];
 
 /** The toolsets that the extension ships. `write` starts off. */
 const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[] }> = [
@@ -67,7 +65,7 @@ export function defaultState(): PermissionsState {
 		version: 2,
 		scope: "project",
 		extra_paths: [],
-		sandboxes: { readonly_bash: false, no_network: false },
+		sandboxes: { filesystem: "off", no_network: false },
 		toolsets: builtinToolsets(),
 	};
 }
@@ -187,9 +185,17 @@ export function mergeState(raw: unknown): PermissionsState {
 	};
 
 	const sandboxes = isRecord(source.sandboxes) ? source.sandboxes : {};
-	for (const key of SANDBOX_KEYS) {
-		const value = sandboxes[key];
-		if (typeof value === "boolean") state.sandboxes[key] = value;
+	if (typeof sandboxes.no_network === "boolean") state.sandboxes.no_network = sandboxes.no_network;
+	if (state.scope === "project") {
+		if (sandboxes.filesystem === "off" || sandboxes.filesystem === "read" || sandboxes.filesystem === "read+write") {
+			state.sandboxes.filesystem = sandboxes.filesystem;
+		} else if (!("filesystem" in sandboxes) && sandboxes.readonly_bash === true) {
+			state.sandboxes.filesystem = "read";
+		} else if ("filesystem" in sandboxes) {
+			// An unknown value, such as one from a later version, must not open the host
+			// filesystem. Fall back to the restrictive state and keep the layers consistent.
+			state.sandboxes.filesystem = "read";
+		}
 	}
 
 	return state;
