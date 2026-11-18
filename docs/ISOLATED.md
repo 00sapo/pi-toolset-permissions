@@ -29,9 +29,11 @@ Use `--inner-pi /absolute/path/to/pi` or `--inner-node /absolute/path/to/node` i
 
 Open `/permissions` in the outer Pi to turn the layers on and off. A change restarts the inner process with the new combination.
 
-The screen names the coverage and the platform. Under the Sandboxes heading it states that every tool runs inside the sandbox and that the executor runs on Linux only. The footer shows `sandboxes:1/2 all tools`, or `sandboxes:off` when no layer is on.
+The screen names the coverage in one line under the Sandboxes heading. On Linux that line reads `Applies to all tools except exceptions.` The footer shows `sandboxes:1/2 all tools`, or `sandboxes:off` when no layer is on.
 
-On macOS and Windows the layers are marked `[unavailable here]`. Turning one on asks for confirmation first, because every call then fails until you turn it off.
+On macOS the heading reads `Sandboxes (bash ONLY · macOS)` and the coverage line reads `Applies to only bash.` The layer rows carry `[unavailable here]` for a layer that cannot start here. Turning one on asks for confirmation first, because every call then fails until you turn it off.
+
+Windows has no backend, so the whole Sandboxes section is absent there.
 
 Do not load the original third-party extensions in the outer Pi. Their initialization code otherwise runs outside the sandbox. The prototype refuses to start while another extension registers host tools, but it cannot undo code that already ran.
 
