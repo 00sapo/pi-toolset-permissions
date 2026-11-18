@@ -57,7 +57,7 @@ When every layer goes off, the prototype stops the inner process and the host to
 
 Every host tool name becomes a delegate. With no layer, a delegate calls the host implementation. With a layer on, a delegate sends one tool call to the inner Pi and waits for the result and the `agent_settled` event.
 
-The inner Pi starts in RPC mode with a private agent directory and an in-memory session. It loads no discovered extensions. The explicit paths from `--inner-extensions` select the extensions that it loads.
+The inner Pi starts in RPC mode with a private agent directory and an in-memory session. It loads no discovered extensions. The explicit paths from `--inner-extensions` select the extensions that it loads. The relay links the mounted configuration entries into the private agent directory, so the inner Pi finds the rules and the packages that an extension imports. Pi writes its session list and its caches to that private directory, so no host file changes.
 
 The server captures tool declarations from the first model request. RPC preserves the full result, including images, `details`, `structuredContent`, and the error flag. The outer extension forwards supported dialogs and notifications. It does not reproduce custom terminal components.
 
@@ -83,10 +83,14 @@ The sandbox starts with an empty root. Only these paths become visible:
 | The working directory | follows the filesystem state | The project root. `read` mounts it read-only, `read+write` mounts it writable. |
 | Each path from `--inner-extensions` | read-only | The loaded extensions. |
 | The git directory of a worktree | follows the read-only layer | Git needs it, and git writes its index there. |
+| `rules`, `agents`, `extensions`, `skills`, `prompts`, `themes`, and `npm` from the Pi agent directory | read-only | Rules, agent definitions, and the packages that an extension imports. |
+| `settings.json`, `keybindings.json`, `mcp.json`, `subagents.json`, `model-alias.json`, `APPEND_SYSTEM.md`, `SYSTEM.md`, `AGENTS.md`, `AGENTS.override.md` from the Pi agent directory | read-only | Configuration that a sandboxed tool or extension reads. |
 | `/tmp`, `/run`, `/dev`, `/proc`, and the home directory | private and empty | Temporary files, the control socket, devices, processes, and `HOME`. |
 | `/proc/sys/kernel/random` | empty | The host boot identifier stays outside. Random data still comes from `/dev/urandom`. |
 
-Everything else stays outside the view. That includes the rest of your home directory, `~/.ssh`, `~/.pi`, other projects, `/root`, mounted disks, host Unix sockets, and the host name.
+The agent directory appears twice: at its host path and at `/run/pi-home/.pi/agent`, so an extension that reads `homedir()` finds it too. The relay links both into the private agent directory that the inner Pi uses, so `getAgentDir()` returns the mounted entries.
+
+Everything else stays outside the view. That includes the rest of your home directory, `~/.ssh`, other projects, `/root`, mounted disks, host Unix sockets, and the host name. The agent directory is mounted entry by entry, so `auth.json`, `models-store.json`, `trust.json`, `sessions`, and `state` stay outside.
 
 The sandbox has its own IPC and host-name namespaces. The host name inside is always `sandbox`. The environment names no host directory: `PATH` uses `/run/pi-bin`, and `HOME` is `/tmp/home`.
 
