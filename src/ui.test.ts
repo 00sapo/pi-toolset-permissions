@@ -5,6 +5,7 @@ import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { mergeState, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
+import type { SandboxTarget } from "./sandbox-scope.ts";
 
 // Approximate terminal cells for these fixtures: CJK and emoji are wide,
 // combining marks take no cells, and ANSI styling takes no cells.
@@ -70,7 +71,7 @@ type Screen = {
 	invalidate(): void;
 };
 
-async function screenFixture(scope: "project" | "everywhere" = "everywhere", platform: NodeJS.Platform = "linux") {
+async function screenFixture(scope: "project" | "everywhere" = "everywhere", platform: NodeJS.Platform = "linux", target: SandboxTarget = "all-tools") {
 	const longName = "界🧪e\u0301".repeat(24);
 	const patterns = ["^界🧪e\u0301" + "長".repeat(80), "^second_", "^third_"];
 	let state: PermissionsState = {
@@ -114,7 +115,7 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 			},
 		},
 	} as unknown as ExtensionContext;
-	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName], "all-tools", platform);
+	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName], target, platform);
 	return { state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
 }
 
@@ -214,4 +215,15 @@ test("Windows keeps filesystem disabled", async () => {
  fixture.screen.handleInput("j"); fixture.screen.handleInput("j"); fixture.screen.handleInput(" ");
  await Promise.resolve();
  assert.equal(fixture.state().sandboxes.filesystem, "off");
+});
+
+test("the coverage note sits under the Sandboxes title, before the rows", async () => {
+ const linux = assertFits((await screenFixture("project", "linux")).screen, 120);
+ const title = linux.findIndex((line) => line.startsWith(" Sandboxes"));
+ assert.ok(title >= 0);
+ assert.match(linux[title + 1], /Applies to all tools except exceptions/);
+ assert.match(linux[title + 2], /Filesystem/);
+ const mac = assertFits((await screenFixture("project", "darwin", "bash")).screen, 120);
+ const macTitle = mac.findIndex((line) => line.startsWith(" Sandboxes"));
+ assert.match(mac[macTitle + 1], /Applies to only bash/);
 });

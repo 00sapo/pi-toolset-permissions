@@ -146,13 +146,15 @@ export async function openPermissions(
 					section = title;
 					if (position > 0) lines.push("");
 					lines.push(` ${theme.bold(title)}`);
+					// The tool coverage sits under the title, before the layer rows.
+					if (item.kind === "sandbox") {
+						for (const note of sandboxMenuNote(target, platform)) lines.push(theme.fg("dim", `     ${note}`));
+					}
 				}
 				lines.push(rowText(state, item, position === index, width));
-				// The sandbox coverage note belongs under its own section, not at the end.
 				const next = rows[position + 1];
 				if (item.kind === "sandbox" && (next === undefined || next.kind !== "sandbox")) {
-					for (const note of sandboxMenuNote(target, platform)) lines.push(theme.fg("dim", ` ${note}`));
-					if (state.scope === "everywhere") lines.push(theme.fg("dim", " Filesystem is disabled. Select project scope to use it."));
+					if (state.scope === "everywhere") lines.push(theme.fg("dim", "     Filesystem is disabled. Select project scope to use it."));
 				}
 			});
 			lines.push(
