@@ -96,7 +96,8 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
      execute                 [ON] 4 patterns
      permissions             [ON] 1 pattern
 
- Sandboxes
+ Sandboxes (ALL tools · Linux)
+     Applies to all tools except exceptions.
      Filesystem              [OFF]
      No network              [OFF]
 
@@ -229,7 +230,7 @@ A link inside the project counts as a project path. Reading or writing through t
 
 ## The sandboxes
 
-The screen lists two sandboxes.
+The screen lists two sandboxes. The first line of the section states the tool coverage. On macOS it reads `Applies to only bash.` and on Linux it reads `Applies to all tools except exceptions.` Windows has no backend, so the section does not appear there.
 
 Press space to turn the selected sandbox on or off.
 
@@ -239,7 +240,7 @@ The sandbox means a different thing on each system.
 |---|---|---|
 | Linux | This extension, which uses the isolated executor | Every tool. No tool runs on the host while a layer is on. |
 | macOS | This extension | `bash` only. Turn every other toolset off, because the other tools run on the host. |
-| Windows | None | Nothing. The layers are disabled and the screen says to start Pi inside WSL2. |
+| Windows | None | Nothing. The layers are disabled, and the screen shows no Sandboxes section. |
 
 On Linux the extension hands the tool set to the isolated executor in `docs/ISOLATED.md`. That executor runs every tool in a separate Pi process inside a bubblewrap sandbox. It needs `bwrap`.
 
