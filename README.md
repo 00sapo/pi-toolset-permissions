@@ -51,6 +51,8 @@ A path scope is the set of directories that file tools can touch. Project scope 
 The `permissions` toolset holds the `permissions` tool. Off blocks state changes through that tool, but still permits approval requests for ask tools.
 The `/permissions` command always works. Use that command to turn the toolset back on.
 
+The `permissions` toolset has only the on and off states. It does not accept ask, because every change through the tool already asks you to confirm. `set_toolset` refuses `mode: ask` for this toolset, and a stored ask value loads as on.
+
 Bash is one tool. Its patterns sit in the execute toolset. The sandbox is a second layer. It starts the whole call inside the boundary, and it does not read the command text.
 
 The model changes the state with the `permissions` tool. The tool asks you to agree before each change. Without a dialog, the tool cannot change the state.
@@ -145,6 +147,8 @@ Press space to cycle a toolset through off → on → ask → off.
 | ask | Require approval for each exact call. Show the tool, full input, and the AI reason. |
 
 If both on and ask toolsets match, on takes precedence. Path limits and sandboxes still apply after approval.
+
+The `permissions` toolset is the exception. It has only off and on, so it never waits in ask mode.
 
 In ask mode, the AI explains the action and reason, then calls the target tool directly.
 The gate pauses that call and shows the approval dialog. If you approve, that same call runs immediately.
