@@ -10,6 +10,8 @@ A path scope is the set of directories that file tools can touch. A sandbox is a
 
 The `permissions` toolset holds the `permissions` tool. Off blocks state changes but preserves the approval channel for ask tools.
 
+The `permissions` toolset supports only the on and off states. Each change through the tool already asks the user to confirm, so a second approval for the same call adds no protection. The tool refuses `mode: ask` for this toolset, the screen skips ask in its cycle, and a stored ask value loads as on.
+
 ## Layers
 
 1. State. One JSON file holds the toolsets, the scope, the paths, and the sandboxes.
