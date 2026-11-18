@@ -11,7 +11,7 @@ import { statusText } from "./status.ts";
 import { sandboxMenuNote, sandboxRowMark, sandboxSectionTitle } from "./sandbox-scope.ts";
 import { layersEnabled, platformPolicy, requiresBashOnly } from "./platform.ts";
 import type { SandboxTarget } from "./sandbox-scope.ts";
-import type { PermissionsState, Toolset } from "./types.ts";
+import type { PermissionsState, FilesystemMode, Toolset } from "./types.ts";
 import { allowsAsk, nextToolsetMode, toolsetMode } from "./types.ts";
 
 type Row =
@@ -89,6 +89,9 @@ export async function openPermissions(
 
 		const onOff = (value: boolean): string => (value ? theme.fg("success", "[ON]") : theme.fg("muted", "[OFF]"));
 
+		const filesystemMode = (mode: FilesystemMode): string => mode === "off"
+			? theme.fg("muted", "[OFF]") : theme.fg("success", `[${mode.toUpperCase()}]`);
+
 		const modeLabel = (toolset: Toolset): string => toolset.enabled === "ask"
 			? theme.fg("warning", "[ASK]") : onOff(toolset.enabled);
 
@@ -119,11 +122,11 @@ export async function openPermissions(
 				}
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
-					const mark = item.info.key === "filesystem" && state.scope === "everywhere"
-						? " [disabled: requires project scope]" : sandboxRowMark(target, platform);
-					const shown = mark.length === 0 ? "" : theme.fg("warning", mark);
+					const shown = item.info.key === "filesystem" && state.scope === "everywhere"
+						? theme.fg("warning", " [disabled: requires project scope]")
+						: sandboxRowMark(target, platform);
 					const mode = item.info.key === "filesystem"
-						? `[${state.sandboxes.filesystem.toUpperCase()}]` : onOff(state.sandboxes.no_network);
+						? filesystemMode(state.sandboxes.filesystem) : onOff(state.sandboxes.no_network);
 					return `   ${marker} ${name}${mode}${shown}`;
 				}
 				case "scope":

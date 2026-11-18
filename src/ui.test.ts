@@ -27,6 +27,9 @@ function visibleWidth(text: string): number {
 	return Array.from(stripVTControlCharacters(text)).reduce((width, character) => width + cellWidth(character), 0);
 }
 
+// One terminal color per theme name, so a test can name the style that a row uses.
+const COLOR_CODE: Record<string, number> = { accent: 1, success: 2, warning: 3, muted: 4, dim: 5 };
+
 function truncateToWidth(text: string, width: number, ellipsis = "…"): string {
 	const plain = stripVTControlCharacters(text);
 	if (visibleWidth(plain) <= width) return text;
@@ -106,7 +109,7 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 				screen = factory(
 					{ requestRender: () => { renders += 1; } },
 					{
-						fg: (_color: string, text: string) => `\x1b[36m${text}\x1b[39m`,
+						fg: (color: string, text: string) => `\x1b[38;5;${COLOR_CODE[color] ?? 0}m${text}\x1b[39m`,
 						bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
 					},
 					{ matches: () => false },
@@ -226,4 +229,13 @@ test("the coverage note sits under the Sandboxes title, before the rows", async 
  const mac = assertFits((await screenFixture("project", "darwin", "bash")).screen, 120);
  const macTitle = mac.findIndex((line) => line.startsWith(" Sandboxes"));
  assert.match(mac[macTitle + 1], /Applies to only bash/);
+});
+
+test("a filesystem layer at off uses the same grey mark as the other off states", async () => {
+ const { screen } = await screenFixture("project", "linux");
+ const lines = screen.render(120);
+ const row = lines.find((line) => line.includes("Filesystem"))!;
+ assert.match(row, /\x1b\[38;5;4m\[OFF\]\x1b\[39m/, "The filesystem off mark uses the muted color");
+ const network = lines.find((line) => line.includes("No network"))!;
+ assert.match(network, /\x1b\[38;5;4m\[OFF\]\x1b\[39m/);
 });
