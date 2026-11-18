@@ -9,7 +9,7 @@ import { appendPattern, matchingNames, removePattern, replacePattern } from "./p
 import { MAX_EXTRA_PATHS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns } from "./state.ts";
 import { statusText } from "./tool.ts";
 import type { PermissionsState, Toolset } from "./types.ts";
-import { nextToolsetMode, toolsetMode } from "./types.ts";
+import { allowsAsk, nextToolsetMode, toolsetMode } from "./types.ts";
 
 type Row =
 	| { kind: "toolset"; toolset: Toolset }
@@ -136,6 +136,7 @@ export async function openPermissions(
 			lines.push(
 				"",
 				theme.fg("dim", " Toolsets: OFF blocked · ON no request · ASK approve each call"),
+				theme.fg("dim", " The permissions toolset has only OFF and ON."),
 				theme.fg("dim", " If several toolsets match, ON takes priority over ASK and OFF."),
 				theme.fg("dim", " j/k move · l enter · h back · space off → on → ask"),
 				theme.fg("dim", " s scope · a add path · d remove path"),
@@ -175,6 +176,9 @@ export async function openPermissions(
 			});
 
 			lines.push("", theme.fg("dim", " j/k move · l/enter edit · h/esc back · a add · d delete · space off → on → ask"));
+			if (!allowsAsk(toolset.name)) {
+				lines.push(theme.fg("dim", " This toolset has only off and on. Space switches between them."));
+			}
 			return lines;
 		};
 
@@ -189,7 +193,7 @@ export async function openPermissions(
 			update((current) => ({
 				...current,
 				toolsets: current.toolsets.map((entry) =>
-					entry.name === toolset.name ? { ...entry, enabled: nextToolsetMode(entry.enabled) } : entry,
+					entry.name === toolset.name ? { ...entry, enabled: nextToolsetMode(entry.enabled, entry.name) } : entry,
 				),
 			}));
 		};

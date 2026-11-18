@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextToolsetMode, toolsetMode } from "./types.ts";
+import { allowsAsk, nextToolsetMode, toolsetMode } from "./types.ts";
 
 test("toolset modes preserve the persisted representation", () => {
 	assert.equal(toolsetMode(false), "off");
@@ -9,10 +9,19 @@ test("toolset modes preserve the persisted representation", () => {
 });
 
 test("toolset modes cycle off, on, ask, off", () => {
-	assert.equal(nextToolsetMode(false), true);
-	assert.equal(nextToolsetMode(true), "ask");
-	assert.equal(nextToolsetMode("ask"), false);
+	assert.equal(nextToolsetMode(false, "read"), true);
+	assert.equal(nextToolsetMode(true, "read"), "ask");
+	assert.equal(nextToolsetMode("ask", "read"), false);
 	for (const value of [false, true, "ask"] as const) {
-		assert.equal(nextToolsetMode(nextToolsetMode(nextToolsetMode(value))), value);
+		assert.equal(nextToolsetMode(nextToolsetMode(nextToolsetMode(value, "read"), "read"), "read"), value);
 	}
+});
+
+test("the permissions toolset cycles off and on only", () => {
+	assert.equal(nextToolsetMode(false, "permissions"), true);
+	assert.equal(nextToolsetMode(true, "permissions"), false);
+	assert.equal(nextToolsetMode("ask", "permissions"), false);
+	assert.equal(allowsAsk("permissions"), false);
+	assert.equal(allowsAsk("Permissions"), false);
+	assert.equal(allowsAsk("read"), true);
 });
