@@ -24,6 +24,7 @@ const parameters = Type.Object({
 			Type.Literal("remove_toolset"),
 			Type.Literal("set_toolset"),
 			Type.Literal("set_sandbox"),
+			Type.Literal("set_unsandboxed_tools"),
 		],
 		{ description: "Action to run. Read status first when the reason for a block is unclear." },
 	),
@@ -265,6 +266,31 @@ async function setSandbox(env: ToolEnv): Promise<ToolOutcome> {
 	);
 }
 
+/**
+ * Replaces the whole exception list. A matching tool runs on the host even while a layer
+ * is on, so the change asks first and names every pattern.
+ */
+async function setUnsandboxedTools(env: ToolEnv): Promise<ToolOutcome> {
+	const raw = env.params.patterns;
+	if (raw === undefined) return { text: "set_unsandboxed_tools needs patterns. Send an empty list to remove every exception.", isError: true };
+	const checked = checkPatterns(raw, true);
+	if ("error" in checked) return { text: checked.error, isError: true };
+	const patterns = checked.patterns;
+	const before = env.store.get().unsandboxed_tools;
+	if (before.length === patterns.length && before.every((pattern, index) => pattern === patterns[index])) {
+		return { text: "The exception list is unchanged." };
+	}
+	const shown = patterns.length === 0 ? "(none)" : patterns.map((pattern) => `  ${pattern}`).join("\n");
+	const title = "Set the unsandboxed tools?";
+	const message = `These tools run on the host, outside the sandbox:\n\n${shown}`;
+	if (!(await env.ctx.ui.confirm(title, message))) return declined();
+	return applyChange(
+		env,
+		(current) => ({ ...current, unsandboxed_tools: patterns }),
+		`The unsandboxed tools are now ${patterns.length === 0 ? "empty" : patterns.join(", ")}.`,
+	);
+}
+
 async function runAction(env: ToolEnv): Promise<ToolOutcome> {
 	const { action } = env.params;
 	if (action === "status") return { text: statusText(env.store.get()) };
@@ -283,9 +309,11 @@ async function runAction(env: ToolEnv): Promise<ToolOutcome> {
 			return setToolset(env);
 		case "set_sandbox":
 			return setSandbox(env);
+		case "set_unsandboxed_tools":
+			return setUnsandboxedTools(env);
 		default:
 			return {
-				text: "Unknown action. Use status, set_scope, add_path, remove_path, add_toolset, remove_toolset, set_toolset, or set_sandbox.",
+				text: "Unknown action. Use status, set_scope, add_path, remove_path, add_toolset, remove_toolset, set_toolset, set_sandbox, or set_unsandboxed_tools.",
 				isError: true,
 			};
 	}

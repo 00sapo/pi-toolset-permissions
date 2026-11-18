@@ -215,6 +215,16 @@ The screen uses these keys:
 
 The editor checks each pattern. A pattern must compile as a JavaScript regular expression, must not be empty, and must be 500 characters at most. A toolset holds at least one pattern and at most 32.
 
+## The exception list
+
+The screen has an Exceptions section with one row, Unsandboxed tools. Press `l` to open a pattern list that works like a toolset list: `a` adds, `l` edits, `d` deletes, `j` and `k` move, `h` goes back.
+
+A tool whose name matches one of these patterns runs on the host, outside the sandbox, even while a layer is on. Use it for a tool that the sandbox cannot run, for example one that needs a device or a host socket. Every other tool stays inside the sandbox.
+
+The list is empty by default, and an empty list means that no tool is exempt. It holds the same kind of regular expressions as a toolset, and it is limited to the same number of patterns. The model can replace the whole list with `set_unsandboxed_tools`, and that change asks you to confirm, because it names every pattern that will run outside the sandbox.
+
+## Toolset patterns
+
 The four shipped toolsets start with default patterns. A change to one of them is saved like a custom toolset, and the state file holds the new list. To go back to the default list of one toolset, delete its entry from the state file and reload.
 
 ## The paths
@@ -292,6 +302,7 @@ The model uses one tool with nine actions.
 | remove_toolset | name | delete a custom toolset |
 | set_toolset | name, mode | set a toolset to off, on, or ask |
 | set_sandbox | sandbox, mode or enabled | set the filesystem state, or turn the no-network layer on or off |
+| set_unsandboxed_tools | patterns | replace the exception list |
 
 The `status` action only reads. State changes and `request_tool` require your approval.
 

@@ -8,7 +8,7 @@ import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
 import { openPermissions } from "./ui.ts";
 import { statusLine } from "./status.ts";
-import { foreignTools, layerKey, layersActive, ownPaths } from "./layers.ts";
+import { foreignTools, isExempt, layerKey, layersActive, ownPaths } from "./layers.ts";
 import type { SandboxLayers } from "./layers.ts";
 
 /**
@@ -96,7 +96,6 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	function configurationKey(ctx: ExtensionContext, layers: SandboxLayers): string {
 		return layerKey(layers, layers.filesystem === "off" ? [] : allowedRoots(ctx));
 	}
-
 	/** The running executor for these layers. It starts one if the combination needs it. */
 	async function ensureRunner(ctx: ExtensionContext, layers: SandboxLayers): Promise<IsolatedRunner | undefined> {
 		if (!layersActive(layers)) {
@@ -172,7 +171,9 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			// An unreadable file keeps the last good state.
 		}
 		const layers = { ...store.get().sandboxes };
-		if (!layersActive(layers)) return (tool.execute as any)(id, params, signal, onUpdate, ctx);
+		// The exception list is the user's decision, so a matching tool keeps the host implementation.
+		const exempt = store.get().unsandboxed_tools.some((pattern) => isExempt(pattern, tool.name));
+		if (!layersActive(layers) || exempt) return (tool.execute as any)(id, params, signal, onUpdate, ctx);
 		currentSignal = signal;
 		try {
 			return await runIsolated(ctx, tool.name, params, signal, onUpdate);

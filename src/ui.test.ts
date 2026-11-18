@@ -82,6 +82,7 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 			{ name: "second", patterns: ["^second_"], enabled: true, builtin: true },
 		],
 		sandboxes: { filesystem: "off", no_network: false },
+		unsandboxed_tools: ["^exempt_tool$"],
 	};
 	const notifications: string[] = [];
 	const edits: Array<{ title: string; value: string }> = [];
@@ -114,7 +115,7 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 			},
 		},
 	} as unknown as ExtensionContext;
-	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName], "all-tools", platform);
+	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName, "exempt_tool"], "all-tools", platform);
 	return { state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
 }
 
@@ -213,4 +214,36 @@ test("Windows keeps filesystem disabled", async () => {
  await Promise.resolve();
  assert.equal(fixture.state().sandboxes.filesystem, "off");
  assert.match(fixture.notifications.join("\n"), /WSL2/);
+});
+
+test("the exceptions list opens, shows matches, and edits like a pattern list", async () => {
+	const fixture = await screenFixture("project");
+	const { screen, notifications } = fixture;
+	const lines = () => assertFits(screen, 120);
+	// Two toolsets, then the two sandboxes, then the exceptions row.
+	assert.ok(lines().includes(" Exceptions"), "the section is visible");
+	assert.ok(lines().some((line) => line.includes("Matching tools run on the host")), "the note explains the effect");
+	for (let step = 0; step < 4; step += 1) screen.handleInput("j");
+	assert.ok(lines().some((line) => line.startsWith("   > Unsandboxed tools")), "the row is selectable");
+	screen.handleInput("l");
+	const view = lines();
+	assert.ok(view.some((line) => line.includes("^exempt_tool$")), "the stored pattern is shown");
+	assert.match(view.join("\n"), /\^exempt_tool\$\s+exempt_tool/, "the matched tool name is shown next to it");
+	screen.handleInput("h");
+	assert.ok(lines().includes(" Toolsets"));
+	assert.equal(fixture.state().unsandboxed_tools.length, 1);
+	assert.deepEqual(notifications, []);
+});
+
+test("an empty exception list says that every tool stays inside the sandbox", async () => {
+	const fixture = await screenFixture("project");
+	const { screen } = fixture;
+	fixture.state().unsandboxed_tools = [];
+	screen.handleInput("j");
+	screen.handleInput("j");
+	screen.handleInput("j");
+	screen.handleInput("j");
+	screen.handleInput("l");
+	const lines = assertFits(screen, 120);
+	assert.ok(lines.some((line) => line.includes("No exception")), "an empty list is explained");
 });

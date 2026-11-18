@@ -6,6 +6,7 @@ import type { FilesystemMode, PermissionsState } from "./types.ts";
 const base = (filesystem: FilesystemMode, no_network = false): PermissionsState => ({
 	version: 2, scope: "project", extra_paths: [], toolsets: [],
 	sandboxes: { filesystem, no_network },
+	unsandboxed_tools: [],
 });
 
 test("on Linux the footer names full coverage when a layer is on", () => {
@@ -45,4 +46,12 @@ test("filesystem modes appear in reports and active counts ignore off", () => {
   assert.match(statusText(base(mode)), new RegExp(`filesystem=${mode.replace("+", "\\+")}`));
   assert.match(statusLine(base(mode, true), "all-tools", "linux"), mode === "off" ? /sandboxes:1\/2/ : /sandboxes:2\/2/);
  }
+});
+
+test("the report names the unsandboxed tools", () => {
+	const state = base(false);
+	assert.match(statusText(state, "all-tools", "linux"), /unsandboxed tools: none/);
+	state.unsandboxed_tools = ["^my_tool$", "^other_"];
+	const report = statusText(state, "all-tools", "linux");
+	assert.match(report, /unsandboxed tools: \^my_tool\$, \^other_/);
 });

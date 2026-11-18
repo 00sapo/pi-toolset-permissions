@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideCall, foreignTools, isOwnTool, layerKey, layersActive, ownPaths } from "./layers.ts";
+import { decideCall, exemptTools, exemptionKey, foreignTools, isExempt, isOwnTool, layerKey, layersActive, ownPaths } from "./layers.ts";
 
 test("no layer means no executor and no interception", () => {
 	const layers = { filesystem: "off" as const, no_network: false };
@@ -64,4 +64,15 @@ test("a tool registered by any file of this extension is own code", () => {
 
 test("a module that is not isolated.ts reports only its own path", () => {
 	assert.deepEqual(ownPaths("/ext/src/entry.ts"), ["/ext/src/entry.ts"]);
+});
+
+test("an exception pattern matches a tool name and never opens another", () => {
+	assert.equal(isExempt("^my_tool$", "my_tool"), true);
+	assert.equal(isExempt("^my_tool$", "my_tool_extra"), false);
+	assert.equal(isExempt("my_(shell|bash)", "my_shell"), true);
+	assert.equal(isExempt("MY_TOOL", "my_tool"), true, "matching ignores case");
+	assert.equal(isExempt("(", "any_tool"), false, "a broken pattern matches nothing");
+	assert.deepEqual(exemptTools(["^a$", "x_"], ["a", "b", "x_b", "c"]), ["a", "x_b"]);
+	assert.equal(exemptionKey(["b", "a", "b"]), exemptionKey(["a", "b"]));
+	assert.notEqual(exemptionKey(["a"]), exemptionKey(["b"]));
 });

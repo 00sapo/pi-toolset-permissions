@@ -68,6 +68,7 @@ export function defaultState(): PermissionsState {
 		extra_paths: [],
 		sandboxes: { filesystem: "off", no_network: false },
 		toolsets: builtinToolsets(),
+		unsandboxed_tools: [],
 	};
 }
 
@@ -122,6 +123,13 @@ function readExtraPaths(value: unknown): string[] {
 		if (result.length >= MAX_EXTRA_PATHS) break;
 	}
 	return result;
+}
+
+/** Reads the sandbox exception list. An empty list is valid and means no exception. */
+function readUnsandboxedTools(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const checked = checkPatterns(value, true);
+	return "error" in checked ? [] : checked.patterns;
 }
 
 /** A stored mode, with ask refused for a toolset that supports only on and off. */
@@ -188,6 +196,7 @@ export function mergeState(raw: unknown): PermissionsState {
 		extra_paths: readExtraPaths(source.extra_paths),
 		sandboxes: { ...defaults.sandboxes },
 		toolsets,
+		unsandboxed_tools: readUnsandboxedTools(source.unsandboxed_tools),
 	};
 
 	const sandboxes = isRecord(source.sandboxes) ? source.sandboxes : {};

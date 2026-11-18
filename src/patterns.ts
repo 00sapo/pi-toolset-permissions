@@ -11,16 +11,16 @@ function checkOne(source: string): PatternResult {
 	return { patterns: checked.patterns };
 }
 
-/** Appends one pattern to a list. */
-export function appendPattern(patterns: string[], source: string): PatternResult {
+/** Appends one pattern to a list. `allowEmpty` keeps an empty list valid for the exceptions. */
+export function appendPattern(patterns: string[], source: string, allowEmpty = false): PatternResult {
 	if (patterns.length >= MAX_TOOLSET_PATTERNS) {
-		return { error: `A toolset holds ${MAX_TOOLSET_PATTERNS} patterns at most.` };
+		return { error: `A list holds ${MAX_TOOLSET_PATTERNS} patterns at most.` };
 	}
 	const checked = checkOne(source);
 	if ("error" in checked) return checked;
 	const value = checked.patterns[0] ?? "";
 	if (patterns.includes(value)) return { error: `The pattern ${value} is already in the list.` };
-	return checkPatterns([...patterns, value]);
+	return checkPatterns([...patterns, value], allowEmpty);
 }
 
 /** Replaces the pattern at one position. */
