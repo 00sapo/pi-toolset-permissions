@@ -6,6 +6,7 @@ import { realpathSync } from "node:fs";
 import { IsolatedRunner } from "./isolated-runner.ts";
 import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
+import { reportPrompts, suppressPrompts } from "./notify.ts";
 import { openPermissions } from "./ui.ts";
 import { statusLine } from "./status.ts";
 import { foreignTools, isExempt, layerKey, layersActive, ownPaths } from "./layers.ts";
@@ -33,6 +34,9 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	const store = new StateStore();
 	// Every file of this extension. A tool registered by index.ts or isolated.ts is our own code.
 	const ownPath = ownPaths(fileURLToPath(import.meta.url));
+	/** A question from this process or from the inner Pi reaches the host as a prompt. */
+	reportPrompts(pi);
+
 	let runner: IsolatedRunner | undefined;
 	let runnerKey: string | undefined;
 	let starting: Promise<void> | undefined;
@@ -194,7 +198,10 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 					// Keep the state loaded at startup.
 				}
 				try {
-					await openPermissions(store, ctx, pi.getAllTools().map((tool) => tool.name), "all-tools");
+					// The user opened this screen, so it is not a question for the user.
+					await suppressPrompts(
+						() => openPermissions(store, ctx, pi.getAllTools().map((tool) => tool.name), "all-tools"),
+					);
 				} catch (error) {
 					if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
 				}

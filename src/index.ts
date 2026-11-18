@@ -12,6 +12,7 @@ import { statusLine } from "./status.ts";
 import type { Toolset } from "./types.ts";
 import { openPermissions } from "./ui.ts";
 import { install } from "./isolated.ts";
+import { reportPrompts, suppressPrompts } from "./notify.ts";
 import { layersEnabled, platformPolicy } from "./platform.ts";
 import { callReason } from "./reason.ts";
 import {
@@ -162,6 +163,11 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 			if (activeCtx !== undefined) publish(activeCtx);
 		});
 
+		// Herdr reads `herdr:blocked` to mark the pane blocked and to notify the user.
+		// Pi publishes a prompt start and end around every dialog, so this covers the
+		// approval dialog, the unknown-tool question, and the change confirmations.
+		reportPrompts(pi);
+
 		registerPermissionsTool(pi, store, publish, approvals);
 
 		// Bash is one tool. When a sandbox is on, run the command inside the OS boundary.
@@ -222,7 +228,8 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 					toolNames = [];
 				}
 				try {
-					await openPermissions(store, ctx, toolNames, "bash");
+					// The user opened this screen, so it is not a question for the user.
+					await suppressPrompts(() => openPermissions(store, ctx, toolNames, "bash"));
 				} catch (error) {
 					if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
 				}

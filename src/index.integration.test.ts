@@ -320,3 +320,54 @@ test("a child without permissions uses ask_parent without changing its allowlist
 	assert.equal((await gate("ask_parent", { question: "Not exposed here." })).block, true);
 	await events.get("subagents:child:disposed")!({ sessionId: "child-tools" });
 });
+
+test("a waiting approval reports a Herdr block and clears it after the answer", async (t) => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-herdr-block-"));
+	const previous = process.env.PI_PERMISSIONS_FILE;
+	process.env.PI_PERMISSIONS_FILE = join(cwd, "permissions.json");
+	const store = new StateStore();
+	store.update((state) => ({ ...state, toolsets: state.toolsets.map((entry) =>
+		entry.name === "execute" ? { ...entry, enabled: "ask" } : entry) }));
+	const handlers = new Map<string, Function>();
+	const sent: Array<[string, unknown]> = [];
+	let release!: () => void;
+	const answered = new Promise<void>((resolve) => { release = resolve; });
+	// Stand in for Pi, which publishes one prompt span around each dialog.
+	const prompt = (name: string, event: unknown) => handlers.get(name)?.(event, ctx);
+	const ctx = {
+		cwd, hasUI: true, mode: "tui",
+		isIdle: () => false,
+		sessionManager: { getSessionId: () => "herdr-block", getBranch: () => [] },
+		ui: {
+			setStatus() {},
+			select: async () => {
+				prompt("ui_prompt_start", { kind: "select", title: "Allow this call?" });
+				await answered;
+				prompt("ui_prompt_end", { kind: "select", title: "Allow this call?" });
+				return "Allow once";
+			},
+			input: async () => undefined,
+		},
+	};
+	t.after(async () => {
+		await handlers.get("session_shutdown")?.({}, ctx);
+		if (previous === undefined) delete process.env.PI_PERMISSIONS_FILE;
+		else process.env.PI_PERMISSIONS_FILE = previous;
+		rmSync(cwd, { recursive: true, force: true });
+	});
+	extension({
+		registerTool() {}, registerCommand() {},
+		on: (name: string, fn: Function) => handlers.set(name, fn),
+		events: {
+			emit: (name: string, data: unknown) => sent.push([name, data]),
+			on: () => () => {},
+		},
+	} as any);
+	await handlers.get("session_start")!({}, ctx);
+	const pending = handlers.get("tool_call")!({ toolName: "bash", toolCallId: "h1", input: { command: "pwd" } }, ctx);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.deepEqual(sent, [["herdr:blocked", { active: true, label: "Allow this call?" }]]);
+	release();
+	assert.equal(await pending, undefined);
+	assert.deepEqual(sent.at(-1), ["herdr:blocked", { active: false }]);
+});
