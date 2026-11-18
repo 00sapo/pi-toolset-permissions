@@ -64,6 +64,8 @@ export async function openPermissions(
 		let patternIndex = 0;
 		let cachedWidth: number | undefined;
 		let cachedLines: string[] | undefined;
+		// Windows and other systems without a backend show no Sandboxes section at all.
+		const sandboxesEnabled = layersEnabled(platformPolicy(platform));
 
 		const invalidate = (): void => {
 			cachedWidth = undefined;
@@ -95,7 +97,10 @@ export async function openPermissions(
 
 		const buildRows = (state: PermissionsState): Row[] => {
 			const rows: Row[] = state.toolsets.map((toolset) => ({ kind: "toolset", toolset }));
-					for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
+			// Windows and other systems without a backend hide the whole Sandboxes section.
+			if (sandboxesEnabled) {
+				for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
+			}
 			rows.push({ kind: "scope" });
 			[ctx.cwd, ...state.extra_paths].forEach((path, position) => {
 				rows.push({ kind: "path", path, root: position === 0 });

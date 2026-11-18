@@ -209,8 +209,9 @@ test("filesystem menu cycles modes and scope resets through the store", async ()
 });
 test("Windows keeps filesystem disabled", async () => {
  const fixture = await screenFixture("project", "win32");
+ const lines = assertFits(fixture.screen, 120);
+ assert.ok(!lines.some((line) => line.startsWith(" Sandboxes")), "The Sandboxes section is hidden on Windows");
  fixture.screen.handleInput("j"); fixture.screen.handleInput("j"); fixture.screen.handleInput(" ");
  await Promise.resolve();
  assert.equal(fixture.state().sandboxes.filesystem, "off");
- assert.match(fixture.notifications.join("\n"), /WSL2/);
 });
