@@ -25,6 +25,8 @@ pi --no-extensions --no-mcp -e ./src/isolated.ts \
 
 Use `--inner-pi /absolute/path/to/pi` or `--inner-node /absolute/path/to/node` if the executables are absent from `PATH`.
 
+Open `/permissions` in the outer Pi to turn the layers on and off. A change restarts the inner process with the new combination.
+
 Do not load the original third-party extensions in the outer Pi. Their initialization code otherwise runs outside the sandbox. The prototype refuses to start while another extension registers host tools, but it cannot undo code that already ran.
 
 ## Follow the sandbox layers

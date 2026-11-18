@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { IsolatedRunner } from "./isolated-runner.ts";
 import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
+import { openPermissions } from "./ui.ts";
 import { foreignTools, layerKey, layersActive } from "./layers.ts";
 import type { SandboxLayers } from "./layers.ts";
 
@@ -139,6 +140,28 @@ export default function isolatedExtension(pi: ExtensionAPI): void {
 		} finally {
 			currentSignal = undefined;
 		}
+	}
+
+	// The layer screen. A change calls the store listener above, which restarts the process.
+	pi.registerCommand("permissions", {
+		description: "Tool permissions, scope, and sandbox layers",
+		handler: async (_args, ctx) => {
+			currentContext = ctx;
+			try {
+				store.reload();
+			} catch {
+				// Keep the state loaded at startup.
+			}
+			try {
+				await openPermissions(store, ctx, pi.getAllTools().map((tool) => tool.name));
+			} catch (error) {
+				if (ctx.hasUI) ctx.ui.notify(`The permissions screen failed: ${messageOf(error)}`, "error");
+			}
+		},
+	});
+
+	function messageOf(error: unknown): string {
+		return error instanceof Error ? error.message : String(error);
 	}
 
 	pi.on("tool_call", (event, ctx) => {
