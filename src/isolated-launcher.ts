@@ -14,9 +14,16 @@ export interface IsolatedLaunchOptions {
 	network: boolean;
 	piPath?: string;
 	nodePath?: string;
+	/**
+	 * The host Pi agent directory, usually `~/.pi/agent`. Its rules, agents, extensions,
+	 * skills, prompts, themes, and packages become visible read-only. Undefined mounts none.
+	 */
+	piAgentDir?: string;
 	/** Overrides for tests. The defaults mount the entries that ordinary programs read. */
 	etcFiles?: readonly string[];
 	etcDirectories?: readonly string[];
+	agentFiles?: readonly string[];
+	agentDirectories?: readonly string[];
 }
 
 export interface IsolatedLaunchDependencies {
@@ -207,6 +214,43 @@ export function etcMounts(
 	return found;
 }
 
+/**
+ * Files under the Pi agent directory that a sandboxed extension reads.
+ * `auth.json` holds credentials, so it stays outside. So do sessions and caches.
+ */
+export const AGENT_DIR_FILES = [
+	"settings.json",
+	"keybindings.json",
+	"mcp.json",
+	"subagents.json",
+	"model-alias.json",
+	"APPEND_SYSTEM.md",
+	"SYSTEM.md",
+	"AGENTS.md",
+	"AGENTS.override.md",
+];
+
+/** Directories under the Pi agent directory that a tool or an extension reads. */
+export const AGENT_DIR_DIRECTORIES = ["rules", "agents", "extensions", "skills", "prompts", "themes", "npm"];
+
+/** Where the agent directory appears inside the sandbox, so a program that uses `homedir()` finds it. */
+export const HOME_AGENT_DIR = "/run/pi-home/.pi/agent";
+
+/** The agent-directory entries that exist on the host. A missing entry is skipped. */
+export function agentDirectoryMounts(
+	agentDir: string,
+	exists: (path: string) => boolean = pathExists,
+	files: readonly string[] = AGENT_DIR_FILES,
+	directories: readonly string[] = AGENT_DIR_DIRECTORIES,
+): Array<{ source: string; target: string }> {
+	const found: Array<{ source: string; target: string }> = [];
+	for (const name of [...files, ...directories]) {
+		const path = join(agentDir, name);
+		if (exists(path)) found.push({ source: path, target: path });
+	}
+	return found;
+}
+
 /** A minimal account database. The host users and their home paths stay outside the sandbox. */
 export function accountFiles(uid: number, gid: number): Array<{ name: string; content: string }> {
 	return [
@@ -319,6 +363,22 @@ export function buildIsolatedLaunch(
 	// A worktree keeps its git directories outside the project. Git needs them to work, and
 	// with the read-only layer off, git must also be able to write its index and objects.
 	for (const path of restricted ? canonicalRoots(gitDirectories(workdir, readText, exists), canonical) : []) addMount(path, options.filesystem === "read+write");
+	// The Pi configuration. Extensions read rules, agent definitions, and their own packages
+	// from it. The entries are mounted one by one, so credentials, sessions, and caches stay out.
+	const agentDir = options.piAgentDir === undefined ? undefined : canonical(resolve(options.piAgentDir));
+	const agentEntries = agentDir !== undefined ? agentDirectoryMounts(agentDir, exists, options.agentFiles ?? AGENT_DIR_FILES, options.agentDirectories ?? AGENT_DIR_DIRECTORIES) : [];
+	for (const entry of restricted ? agentEntries : []) addMount(entry.source, false);
+	// An extension that reads the configuration from the home directory looks below `HOME`.
+	// The same entries appear there too, at the path that the default layout uses.
+	const mirrored: Array<{ source: string; target: string }> = restricted
+		? agentEntries.map((entry) => ({ source: entry.source, target: join(HOME_AGENT_DIR, entry.source.slice(agentDir!.length + 1)) }))
+		: [];
+	// The inner Pi asks `getAgentDir()` for the configuration. The relay links the mounted
+	// entries into its private directory, so a tool finds them without a host write.
+	if (restricted && agentDir !== undefined && agentEntries.length > 0) {
+		env.PI_BRIDGE_HOST_AGENT_DIR = agentDir;
+		env.PI_BRIDGE_AGENT_ENTRIES = agentEntries.map((entry) => entry.source.slice(agentDir.length + 1)).join(",");
+	}
 	const mounts = new Map<string, { source: string; writable: boolean }>();
 	for (const path of writable.keys()) mounts.set(path, { source: path, writable: writable.get(path) === true });
 	const system = systemMounts(exists, dependencies.readLink);
@@ -357,7 +417,8 @@ export function buildIsolatedLaunch(
 
 	// A mount point must exist inside the sandbox before a bind targets it.
 	const created = new Set([...reserved, "/tmp/home"]);
-	for (const path of restricted ? [...mounts.keys()].sort() : []) {
+	const targets = [...(restricted ? mounts.keys() : []), ...mirrored.map((entry) => entry.target)].sort();
+	for (const path of targets) {
 		for (const dir of parentDirectories(path)) {
 			if (created.has(dir)) continue;
 			created.add(dir);
@@ -367,6 +428,7 @@ export function buildIsolatedLaunch(
 	for (const path of restricted ? [...mounts.keys()].sort() : []) {
 		args.push(mounts.get(path)!.writable ? "--bind" : "--ro-bind", path, path);
 	}
+	for (const entry of mirrored) args.push("--ro-bind", entry.source, entry.target);
 
 	args.push(
 		"--dir", "/run/pi-bridge",

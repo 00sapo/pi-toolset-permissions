@@ -20,6 +20,8 @@ export interface IsolatedRunnerOptions {
 	network: boolean;
 	piPath?: string;
 	nodePath?: string;
+	/** The host Pi agent directory. Undefined mounts none. */
+	piAgentDir?: string;
 	timeoutMs?: number;
 	onUI?: (request: RpcRecord) => Promise<void | RpcRecord>;
 }
@@ -66,7 +68,7 @@ export class IsolatedRunner {
 			socketPath, token: this.bridge.token,
 			cwd: this.options.cwd, extensions: this.options.extensions,
 			filesystem: this.options.filesystem, paths: this.options.paths, network: this.options.network,
-			piPath: this.options.piPath, nodePath: this.options.nodePath,
+			piPath: this.options.piPath, nodePath: this.options.nodePath, piAgentDir: this.options.piAgentDir,
 		});
 		const child = spawn(plan.command, plan.args, { cwd: this.options.cwd, env: plan.env, stdio: "pipe" });
 		this.child = child;

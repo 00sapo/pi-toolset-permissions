@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext, Tool } from "@earendil-works/pi-coding-agent";
-import { createCodingTools } from "@earendil-works/pi-coding-agent";
+import { createCodingTools, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { IsolatedRunner } from "./isolated-runner.ts";
 import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
@@ -131,6 +131,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 					network: layers.no_network,
 					piPath: pi.getFlag("inner-pi") as string | undefined,
 					nodePath: pi.getFlag("inner-node") as string | undefined,
+					piAgentDir: agentDirectory(),
 					onUI: async (request) => {
 						if (!currentContext) throw new Error("The outer UI is unavailable.");
 						return forwardBridgeUI(request, currentContext.ui, currentSignal);
@@ -154,6 +155,19 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 		})();
 		await starting;
 		return runnerKey === key ? runner : undefined;
+	}
+
+	/**
+	 * The host Pi configuration directory. The sandbox mounts its rules, agents, extensions,
+	 * skills, prompts, themes, and packages read-only. A path that does not exist mounts nothing.
+	 */
+	function agentDirectory(): string | undefined {
+		try {
+			const path = realpathSync(getAgentDir());
+			return statSync(path).isDirectory() ? path : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	/** A layer is on, so a missing executor is an error and never a fallback to the host. */

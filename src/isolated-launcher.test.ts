@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { hostname } from "node:os";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HOST_NAME, accountFiles, buildIsolatedLaunch, parentDirectories, systemMounts } from "./isolated-launcher.ts";
+import { HOST_NAME, HOME_AGENT_DIR, accountFiles, buildIsolatedLaunch, parentDirectories, systemMounts } from "./isolated-launcher.ts";
 
 const options = {
 	socketPath: "/tmp/private bridge/model.sock", token: "test-token", cwd: "/workspace/project",
@@ -328,6 +328,73 @@ test("a crafted .git pointer cannot mount an arbitrary host directory", () => {
 	};
 	const { args } = buildIsolatedLaunch(options, { ...dependencies, readText: (path) => files[path] ?? null, exists: (path) => path !== "/home/alice/.ssh/HEAD" });
 	assert.deepEqual(mounts(args).filter((bind) => bind.source.includes("alice")), []);
+});
+
+test("the Pi configuration directory is mounted read-only, at both paths", () => {
+	const agentDir = "/home/test/.pi/agent";
+	const agentPaths = new Set([
+		`${agentDir}/settings.json`, `${agentDir}/subagents.json`, `${agentDir}/APPEND_SYSTEM.md`,
+		`${agentDir}/rules`, `${agentDir}/agents`, `${agentDir}/extensions`, `${agentDir}/npm`,
+	]);
+	const layout = { ...dependencies, exists: (path: string) => agentPaths.has(path) || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, piAgentDir: agentDir }, layout);
+	const found = mounts(args);
+	for (const source of agentPaths) {
+		assert.deepEqual(found.find((entry) => entry.source === source && entry.target === source), { mode: "--ro-bind", source, target: source }, source);
+		const mirror = found.find((entry) => entry.source === source && entry.target.startsWith(HOME_AGENT_DIR));
+		assert.deepEqual(mirror, { mode: "--ro-bind", source, target: `${HOME_AGENT_DIR}/${source.slice(agentDir.length + 1)}` }, source);
+	}
+});
+
+test("the relay learns which configuration entries to link into the private directory", () => {
+	const agentDir = "/home/test/.pi/agent";
+	const layout = { ...dependencies, exists: (path: string) => path.startsWith(agentDir) || hostExists(path) };
+	const { env } = buildIsolatedLaunch({ ...options, piAgentDir: agentDir }, layout);
+	assert.equal(env.PI_BRIDGE_HOST_AGENT_DIR, agentDir);
+	const names = env.PI_BRIDGE_AGENT_ENTRIES.split(",");
+	assert.ok(names.includes("rules") && names.includes("agents") && names.includes("npm"), env.PI_BRIDGE_AGENT_ENTRIES);
+	assert.equal(names.some((name) => name.includes("/")), false, "only top-level entries are named");
+	// No configuration means no link list, and the relay writes its own files.
+	const bare = buildIsolatedLaunch(options, layout).env;
+	assert.equal(bare.PI_BRIDGE_HOST_AGENT_DIR, undefined);
+	assert.equal(bare.PI_BRIDGE_AGENT_ENTRIES, undefined);
+});
+
+test("the Pi configuration mount leaves credentials, sessions, and caches outside", () => {
+	const agentDir = "/home/test/.pi/agent";
+	const everything = { ...dependencies, exists: (path: string) => path.startsWith(agentDir) || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, piAgentDir: agentDir }, everything);
+	for (const bind of mounts(args)) {
+		for (const secret of ["auth.json", "models-store.json", "trust.json", "sessions", "state", ".credentials"]) {
+			assert.equal(bind.source.includes(`/${secret}`), false, `${secret} leaked through ${bind.source}`);
+		}
+	}
+});
+
+test("the agent directory is optional and follows the filesystem layer", () => {
+	const agentDir = "/home/test/.pi/agent";
+	const layout = { ...dependencies, exists: (path: string) => path.startsWith(agentDir) || hostExists(path) };
+	assert.equal(mounts(buildIsolatedLaunch(options, layout).args).some((bind) => bind.source.startsWith(agentDir)), false);
+	const open = buildIsolatedLaunch({ ...options, filesystem: "off", piAgentDir: agentDir }, layout);
+	assert.equal(mounts(open.args).some((bind) => bind.source.startsWith(agentDir)), false, "the host tree is already visible");
+});
+
+test("every agent-directory mirror has a mount point", () => {
+	const agentDir = "/home/test/.pi/agent";
+	const layout = { ...dependencies, exists: (path: string) => path.startsWith(agentDir) || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, piAgentDir: agentDir }, layout);
+	const body = args.slice(0, args.indexOf("--"));
+	const existing = new Set(["/", "/run", "/run/pi-home"]);
+	for (let index = 0; index < body.length; index += 1) {
+		if (body[index] === "--dir" || body[index] === "--tmpfs") existing.add(body[index + 1]);
+		if (body[index] === "--ro-bind" || body[index] === "--bind") {
+			const target = body[index + 2];
+			if (target.startsWith(HOME_AGENT_DIR)) assert.ok(existing.has(parentDirectories(target).at(-1) ?? "/"), `no mount point for ${target}`);
+			existing.add(target);
+			index += 2;
+		}
+	}
+	assert.ok(existing.has(HOME_AGENT_DIR), "the mirrored configuration directory exists");
 });
 
 test("a real worktree git directory is still mounted", () => {

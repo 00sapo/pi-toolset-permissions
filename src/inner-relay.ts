@@ -34,6 +34,19 @@ async function main(): Promise<void> {
    writeFile("/etc/group", `pi:x:${gid}:\n`, { mode: 0o444 }).catch(() => {}),
   ]);
  }
+ // The private agent directory holds no user configuration. Link the read-only entries in,
+ // so `getAgentDir()` finds the rules, agents, and packages that the sandbox mounts. Pi writes
+ // its own models and settings files below that directory, so those names stay unlinked. The
+ // links are read-only, so the session list and the caches still go to the private directory.
+ const GENERATED = new Set(["models.json", "settings.json"]);
+ const hostAgentDir = process.env.PI_BRIDGE_HOST_AGENT_DIR;
+ const agentEntries = (process.env.PI_BRIDGE_AGENT_ENTRIES ?? "").split(",").filter((name) => name && !GENERATED.has(name));
+ if (hostAgentDir && agentEntries.length) {
+  await Promise.all(agentEntries.map((name) => {
+   const source = isAbsolute(name) ? name : `${hostAgentDir}/${name}`;
+   return symlink(source, join(agentDir, name)).catch(() => {});
+  }));
+ }
  const sockets = new Set<Socket>();
  const server = createServer({ allowHalfOpen: true }, (client) => {
   const upstream = createConnection({ path: socketPath, allowHalfOpen: true });
