@@ -52,8 +52,12 @@ export function evaluateCall(
 	// This action only requests approval. The coordinator gates the target call.
 	if (toolName === "permissions" && input.action === "request_tool") return { block: false };
 
-	for (const path of stringValues(input, PATH_KEYS)) {
-		if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
+	// A permission change reaches its own dialog, so its directory argument is not
+	// a target file path. Classification still applies below.
+	if (toolName !== "permissions") {
+		for (const path of stringValues(input, PATH_KEYS)) {
+			if (!isAllowedPath(state, cwd, path)) return blocked("scope", pathReason(state, cwd, path));
+		}
 	}
 
 	const matched = classify(toolName, state.toolsets);
