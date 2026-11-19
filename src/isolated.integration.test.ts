@@ -174,8 +174,9 @@ test("a symlink can only reach a mounted path", {
 	const toEtc = join(cwd, `.probe-etc-${randomUUID()}`);
 	await symlink("/home", toHome);
 	await symlink("/etc/passwd", toEtc);
-	const started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000 });
+	let started: Awaited<ReturnType<typeof IsolatedRunner.start>> | undefined;
 	try {
+		started = await IsolatedRunner.start({ cwd, extensions: [], filesystem: "read", paths: [cwd], network: true, timeoutMs: 20_000 });
 		const response = await started.runner.execute("bash", {
 			command: `ls ${shellQuote(`${toHome}/.ssh`)} 2>&1 | head -2 ; echo SEP ; head -1 ${shellQuote(toEtc)}`,
 		});
@@ -188,7 +189,8 @@ test("a symlink can only reach a mounted path", {
 		assert.match(mountedPart, /pi:x:/, "a mounted path stays reachable through a symlink");
 		assert.doesNotMatch(mountedPart, /federico/);
 	} finally {
-		await started.runner.close();
+		await started?.runner.close();
+		// A failed launch must not leave probe links in the project.
 		await rm(toHome, { force: true });
 		await rm(toEtc, { force: true });
 	}
@@ -261,4 +263,68 @@ test("the environment does not leak host paths or names", {
 	} finally {
 		await started.runner.close();
 	}
+});
+
+test("installed subagents use the parent model relay and gate child effects", {skip: liveSkip, timeout: 60_000}, async () => {
+ const { mkdtemp, mkdir, writeFile, readFile } = await import('node:fs/promises');
+ const { tmpdir } = await import('node:os');
+ const directory = await mkdtemp(join(tmpdir(), 'pi-real-subagent-'));
+ const agent = join(directory, 'agent');
+ await mkdir(join(agent, 'agents'), {recursive:true});
+ await writeFile(join(agent, 'agents/probe.md'), '---\nname: probe\ndescription: Test child\ntools: read, write, bash\n---\nFollow the task.');
+ let requests = 0;
+ const approvals: any[] = [];
+ const extension = join(process.env.HOME!, '.pi/agent/npm/node_modules/@gotgenes/pi-subagents/src/index.ts');
+ const started = await IsolatedRunner.start({cwd:directory, extensions:[extension], filesystem:'read+write', paths:[directory], network:true, piAgentDir:agent,
+  approve: async event => {approvals.push(event); return {block:true,reason:'CHILD_DENIED'};},
+  streamModel: async function* (context, signal) {
+   requests++;
+   assert.equal(signal.aborted,false);
+   const previous = context.messages.filter((m:any)=>m.role === 'toolResult');
+   const message:any = {role:'assistant',api:'sandbox-parent',provider:'sandbox-parent',model:'parent',timestamp:Date.now(),usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason: previous.length ? 'stop' : 'toolUse',content:previous.length ? [{type:'text',text:'CHILD_FINISHED '+JSON.stringify(previous)}] : [{type:'toolCall',id:'child-write',name:'write',arguments:{path:join(directory,'denied.txt'),content:'forbidden'}}]};
+   yield {type:'start',partial:message};
+   yield {type:'done',reason:message.stopReason,message};
+  },
+ });
+ try {
+  const response = await started.runner.execute('subagent',{subagent_type:'probe',description:'Probe child permissions',prompt:'Perform the task.',model:'sandbox-parent/parent'});
+  assert.equal(response.isError,false,JSON.stringify(response));
+  assert.match(text(response),/CHILD_FINISHED/);
+  assert.match(text(response),/CHILD_DENIED/);
+  assert.equal(requests,2);
+  assert.equal(approvals.length,1);
+  assert.equal(approvals[0].toolName,'write');
+  await assert.rejects(readFile(join(directory,'denied.txt')), {code:'ENOENT'});
+ } finally {await started.runner.close(); await rm(directory,{recursive:true,force:true});}
+});
+
+test("real Hypa works by host alias and PATH inside the namespace", {skip:liveSkip,timeout:30_000},async()=>{
+ const { execFileSync } = await import('node:child_process');
+ const hypa = execFileSync('/bin/sh',['-c','command -v hypa'],{encoding:'utf8'}).trim();
+ const {runner} = await IsolatedRunner.start({cwd,extensions:[],filesystem:'read',paths:[cwd],network:true});
+ try {
+  for(const command of ['hypa --version',`${shellQuote(hypa)} --version`]) {
+   const response = await runner.execute('bash',{command});
+   assert.equal(response.isError,false,text(response));
+   assert.match(text(response),/\d+\.\d+\.\d+/);
+  }
+ } finally {await runner.close();}
+});
+
+test("the installed Hypa extension rewrites bash to a binary the sandbox can run", {skip:liveSkip,timeout:60_000},async()=>{
+ const {existsSync} = await import('node:fs');
+ const {homedir} = await import('node:os');
+ const agentDir = join(homedir(), '.pi/agent');
+ const hypaExtension = join(agentDir,'npm/node_modules/@hypabolic/pi-hypa/extensions/index.ts');
+ if(!existsSync(hypaExtension)) return;
+ const {runner} = await IsolatedRunner.start({cwd,extensions:[hypaExtension],filesystem:'read',paths:[cwd],network:true,piAgentDir:agentDir});
+ try {
+  const tools = (await runner.bridge.discover()).map(tool=>tool.function.name);
+  assert.ok(tools.some(name=>name.startsWith('hypa')),JSON.stringify(tools));
+  // The extension rewrites a leading bare `hypa` to the host binary path it resolved.
+  const response = await runner.execute('bash',{command:'hypa --version'});
+  assert.equal(response.isError,false,text(response));
+  assert.match(text(response),/\d+\.\d+\.\d+/);
+  assert.doesNotMatch(text(response),/command not found|No such file/);
+ } finally {await runner.close();}
 });
