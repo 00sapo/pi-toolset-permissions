@@ -93,20 +93,6 @@ The main screen groups toolsets, sandboxes, scope, and the defaults row. Custom 
 
 Each change is saved at once.
 
-## Custom mounts
-
-A tool sometimes needs a path that the scope does not cover: a cache, a data set, or one config file. Press enter on Custom mounts and then `a`. Type a directory or a single file. It starts read-only, `w` switches it to read-write, and `d` removes it.
-
-One file is often what you want. A tool that publishes needs `~/.npmrc`, and a tool that commits needs `~/.gitconfig`. Mount that file alone, not the home directory.
-
-The model can do the same with `add_mount` and `remove_mount`, and it must ask you first. A path that the scope already covers needs no mount, and a path that belongs to the sandbox, such as `/run`, is refused. Mounts apply while the filesystem layer is not `off`.
-
-## Make these settings default
-
-Each session keeps its own settings, so a change in one project never reaches another. Press enter on Make these settings default to write the current settings to `~/.pi/agent/permissions.json`. A new session starts from that file; the running session keeps its own.
-
-The model can do the same with `save_defaults`, and it must ask you first.
-
 ## License
 
 GPL-3.0-only. Copyright (C) 2026 00sapo. The full text is in [LICENSE](LICENSE).
