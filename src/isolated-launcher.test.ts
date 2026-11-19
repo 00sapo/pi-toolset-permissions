@@ -308,7 +308,10 @@ test("live bwrap enforces scoped roots and leaves off mode host files writable",
  const {mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, rmSync} = await import("node:fs");
  const {tmpdir} = await import("node:os");
  const {join} = await import("node:path");
- const probe = spawnSync("bwrap", ["--bind", "/", "/", "--unshare-net", "--", "/bin/true"], {encoding:"utf8"});
+ // Probe the namespaces that the plan actually uses. A host can allow the network
+ // namespace and still refuse a nested PID namespace, so the network probe alone is
+ // not enough.
+ const probe = spawnSync("bwrap", ["--bind", "/", "/", "--unshare-net", "--unshare-pid", "--proc", "/proc", "--", "/bin/true"], {encoding:"utf8"});
  if (probe.status !== 0) return t.skip(`bubblewrap namespaces unavailable: ${probe.stderr ?? probe.error}`);
  const dir = mkdtempSync(join(tmpdir(),"pi-scoped-backend-"));
  const project = join(dir,"project"), custom = join(dir,"custom"), outside = join(dir,"outside");
