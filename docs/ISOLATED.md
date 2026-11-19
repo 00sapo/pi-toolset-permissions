@@ -1,6 +1,6 @@
 # Isolated executor
 
-On Linux, `src/index.ts` delegates every tool call to a second Pi process inside a bubblewrap sandbox. The inner Pi uses no real model. A local OpenAI-compatible server supplies tool calls, and RPC returns results and supported dialogs.
+On Linux, `src/index.ts` forwards tool execution to a second Pi process inside a bubblewrap sandbox when a layer is on. The inner Pi uses no real model. A local OpenAI-compatible server supplies tool calls, and RPC returns results and supported dialogs.
 
 The executor follows the two sandbox layers of `/permissions`. The filesystem layer has three states: `off` leaves the host tree open, `read` exposes only the project root and the extra paths, and `read+write` also permits writes there. The no-network layer denies outbound IP traffic. A process boundary is fixed when the process starts, so each layer combination, and each change to the allowed roots, uses its own process.
 
@@ -10,15 +10,15 @@ The extension picks the boundary by platform. Linux uses this executor. macOS wr
 
 Install Pi 1.5.2, bubblewrap, and Node.js 22.19 or newer on the Linux host. Make sure that `pi`, `bwrap`, and `node` are available through `PATH`.
 
-From this repository, start the outer Pi with only this extension:
+From this repository, start Pi with the extension:
 
 ```sh
-pi --no-extensions --no-mcp -e ./src/index.ts
+pi -e ./src/index.ts
 ```
 
 `./src/isolated.ts` is the same executor as a standalone entry point, for a test that leaves the normal wiring out.
 
-To load third-party extensions inside the sandbox, supply their paths as a JSON array:
+Pi discovers loaded third-party tool sources automatically. To add extensions only inside the sandbox, supply their paths as a JSON array:
 
 ```sh
 pi --no-extensions --no-mcp -e ./src/index.ts \
@@ -35,11 +35,17 @@ On macOS the heading reads `Sandboxes (bash ONLY · macOS)` and the coverage lin
 
 Windows has no backend, so the whole Sandboxes section is absent there.
 
-Do not load the original third-party extensions in the outer Pi. Their initialization code otherwise runs outside the sandbox. The prototype refuses to start while another extension registers host tools, but it cannot undo code that already ran.
+Extension initialization and hooks run in the outer Pi with host access. The boundary covers delegated tool execution only. Load only trusted extensions.
+
+The executor loads discovered tool sources again inside the sandbox. Inner initialization and hooks can therefore run a second time. The two copies do not share memory. Host hooks, commands, and background work remain outside the boundary.
+
+A load failure or a missing declaration makes the affected tool unavailable. The executor never grants an exemption automatically. If you trust the tool and need host execution, add an exact-name pattern under Unsandboxed tools in `/permissions`.
+
+An ordinary tool error does not prove incompatibility. Tools that need host credentials, inherited environment variables, or custom terminal components can fail inside the sandbox.
 
 ## Follow the sandbox layers
 
-The prototype reads the sandbox flags from the same state file as `/permissions`. End the Pi process and start the prototype with the normal entry point disabled.
+The executor reads the sandbox flags from the same state file as `/permissions`.
 
 | Layers | Result |
 |---|---|
@@ -49,7 +55,7 @@ The prototype reads the sandbox flags from the same state file as `/permissions`
 | no network on | Outbound IP traffic fails in the inner process. |
 | filesystem off with no network on | Every host file stays readable and writable, and the network is still blocked. |
 
-When you change a combination, the prototype stops the inner process and starts one that matches the new layers. The tool call that triggers the change waits for the new process. A call never runs on the host while a layer is on.
+When you change a combination, the prototype stops the inner process and starts one that matches the new layers. The tool call that triggers the change waits for the new process. A delegated call never falls back to the host. Explicit unsandboxed patterns retain host execution.
 
 When every layer goes off, the prototype stops the inner process and the host tools answer again.
 
@@ -57,11 +63,11 @@ When every layer goes off, the prototype stops the inner process and the host to
 
 Every host tool name becomes a delegate. With no layer, a delegate calls the host implementation. With a layer on, a delegate sends one tool call to the inner Pi and waits for the result and the `agent_settled` event.
 
-The inner Pi starts in RPC mode with a private agent directory and an in-memory session. It loads no discovered extensions. The explicit paths from `--inner-extensions` select the extensions that it loads. The relay links the mounted configuration entries into the private agent directory, so the inner Pi finds the rules and the packages that an extension imports. Pi writes its session list and its caches to that private directory, so no host file changes.
+The inner Pi starts in RPC mode with a private agent directory and an in-memory session. It loads no discovered extensions. Discovered source paths and `--inner-extensions` select the extensions that it loads. The relay links the mounted configuration entries into the private agent directory, so the inner Pi finds the rules and the packages that an extension imports. Pi writes its session list and its caches to that private directory, so no host file changes.
 
 The server captures tool declarations from the first model request. RPC preserves the full result, including images, `details`, `structuredContent`, and the error flag. The outer extension forwards supported dialogs and notifications. It does not reproduce custom terminal components.
 
-Calls execute one at a time. The protocol timeout does not run while a forwarded dialog waits for the user. A timeout in the other phases, cancellation, protocol failure, or child failure stops the executor. A later call starts a new process. The prototype never falls back to a host tool while a layer is on.
+Calls execute one at a time. The protocol timeout does not run while a forwarded dialog waits for the user. A timeout in the other phases, cancellation, protocol failure, or child failure stops the executor. A later call starts a new process after a failed bridge operation. The prototype never falls back to a host tool while a layer is on.
 
 `/reload` stops the inner process and starts a new one. The layer combination also applies after the reload.
 
@@ -81,7 +87,7 @@ The sandbox starts with an empty root. Only these paths become visible:
 | `/run/pi-bin` | symlinks | `node` and `pi` under a sandbox path, so `PATH` names no host directory. |
 | The relay file | read-only | The program that connects the inner Pi to the control socket. |
 | The working directory | follows the filesystem state | The project root. `read` mounts it read-only, `read+write` mounts it writable. |
-| Each path from `--inner-extensions` | read-only | The loaded extensions. |
+| Package roots for discovered and manual extensions | read-only | Source files, sibling imports, and dependencies. |
 | The git directory of a worktree | follows the read-only layer | Git needs it, and git writes its index there. |
 | `rules`, `agents`, `extensions`, `skills`, `prompts`, `themes`, and `npm` from the Pi agent directory | read-only | Rules, agent definitions, and the packages that an extension imports. |
 | `settings.json`, `keybindings.json`, `mcp.json`, `subagents.json`, `model-alias.json`, `APPEND_SYSTEM.md`, `SYSTEM.md`, `AGENTS.md`, `AGENTS.override.md` from the Pi agent directory | read-only | Configuration that a sandboxed tool or extension reads. |
@@ -90,13 +96,27 @@ The sandbox starts with an empty root. Only these paths become visible:
 
 The agent directory appears twice: at its host path and at `/run/pi-home/.pi/agent`, so an extension that reads `homedir()` finds it too. The relay links both into the private agent directory that the inner Pi uses, so `getAgentDir()` returns the mounted entries.
 
-Everything else stays outside the view. That includes the rest of your home directory, `~/.ssh`, other projects, `/root`, mounted disks, host Unix sockets, and the host name. The agent directory is mounted entry by entry, so `auth.json`, `models-store.json`, `trust.json`, `sessions`, and `state` stay outside.
+Paths outside these mounts stay outside the view. That includes the rest of your home directory, `~/.ssh`, other projects, `/root`, mounted disks, host Unix sockets, and the host name. The agent directory is mounted entry by entry, so `auth.json`, `models-store.json`, `trust.json`, `sessions`, and `state` stay outside.
 
-The sandbox has its own IPC and host-name namespaces. The host name inside is always `sandbox`. The environment names no host directory: `PATH` uses `/run/pi-bin`, and `HOME` is `/tmp/home`.
+The sandbox has its own IPC and host-name namespaces. The host name inside is always `sandbox`. The `PATH` uses `/run/pi-bin`. The `HOME` is `/run/pi-home`.
 
 The restricted states do not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host. A write outside the allowed roots can therefore report success and still leave the host file unchanged.
 
 With `filesystem off`, `/run` stays private because the bridge socket and the agent directory live there. The rest of the host tree is mounted writable.
+
+## API integration
+
+Pi 1.5.2 returns metadata from `getAllTools`, without executors. The `tool_call` hook can block calls but cannot return replacement results.
+
+The executor adapts the exported `ExtensionRunner.prototype.getAllRegisteredTools` method before Pi creates executable wrappers. Each session uses a private anchor definition to select its own delegates. The wrappers preserve the original definition for layers off and explicit exemptions.
+
+This adapter depends on Pi internals. Future Pi versions need runtime tests. A guard blocks unwrapped tools while a layer is on. SDK custom tools cannot use this adapter and remain blocked unless explicitly exempted.
+
+The inner inventory reports source paths without tool probes. A foreign tool needs a matching source and a declared tool name. A missing foreign override never uses an inner built-in with the same name.
+
+The CLI can exit after an extension load failure. If its diagnostic names an exact requested path, the executor retries without that source. Other tools stay available. Unknown startup errors stop the executor.
+
+Inner-only direct declarations become outer delegates through `registerTool`. They have no host implementation and fail with layers off or an exemption. Hidden and deferred declarations are not promoted. Output schemas and custom rendering do not cross the declaration channel.
 
 ## Limits
 
@@ -136,5 +156,5 @@ npm test
 To run the real Pi integration tests on a Linux host with bubblewrap, enable the live test flag:
 
 ```sh
-PI_BRIDGE_LIVE_TEST=1 node --test src/isolated.integration.test.ts
+PI_BRIDGE_LIVE_TEST=1 npm test
 ```
