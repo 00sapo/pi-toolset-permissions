@@ -106,6 +106,8 @@ The runtime files of this extension are mounted read-only at their host paths. W
 
 A program that the outer configuration writes into a command must exist inside the sandbox. The launcher mounts the `hypa` binary read-only at its host path and links it into `/run/pi-bin`, so a rewritten command and a bare `hypa` both resolve. No home directory or credential store is mounted for it.
 
+A version manager usually writes a program entry as a symbolic link. The shims directory holds `hypa` as a link to the real program, and four PATH directories on this host are links too. bwrap refuses a bind that targets a symbolic link, so the launcher checks each host path between a mount and a nested mount before it writes the arguments. When a link is in between, the nested mount becomes a bind of the file that the link names. The bind is skipped when another mount already shows that file. A link never pulls a system tree into the sandbox.
+
 The restricted states do not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host. A write outside the allowed roots can therefore report success and still leave the host file unchanged.
 
 With `filesystem off`, `/run` stays private because the bridge socket and the agent directory live there. The rest of the host tree is mounted writable.
