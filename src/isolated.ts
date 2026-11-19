@@ -189,7 +189,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 					if (!expected || !actual || canonicalSource(expected) !== canonicalSource(actual)) available.delete(name);
 				}
 				for (const name of originals.keys()) {
-					if (!available.has(name) && !store.get().unsandboxed_tools.some(pattern => isExempt(pattern, name))) {
+					if (pi.getActiveTools().includes(name) && !available.has(name) && !store.get().unsandboxed_tools.some(pattern => isExempt(pattern, name))) {
 						ctx.ui.notify(unavailable(name), "warning");
 					}
 				}
