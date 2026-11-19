@@ -40,7 +40,7 @@ test("defaults match the sketch", () => {
 		state.toolsets.map((toolset) => [toolset.name, toolset.enabled, toolset.builtin]),
 		[
 			["read", true, true],
-			["write", false, true],
+			["write", true, true],
 			["execute", true, true],
 			["subagent", true, true],
 			["permissions", true, true],

@@ -86,9 +86,9 @@ test("a disabled toolset is skipped", () => {
 	assert.equal(classify("foo", toolsets), null);
 });
 
-test("the write tool is unknown at the default state", () => {
-	assert.equal(classify("write", DEFAULTS), null);
-	assert.equal(classify("edit", DEFAULTS), null);
+test("every shipped toolset is on at the default state", () => {
+	assert.deepEqual(names("write", DEFAULTS), ["write"]);
+	assert.deepEqual(names("edit", DEFAULTS), ["write"]);
 	assert.deepEqual(names("read", DEFAULTS), ["read"]);
 	assert.deepEqual(names("bash", DEFAULTS), ["execute"]);
 });

@@ -86,9 +86,9 @@ test("an unknown tool is blocked so the caller can ask", () => {
 	});
 });
 
-test("the default state blocks write tools because the write toolset is off", () => {
+test("an off write toolset blocks write tools", () => {
 	withWorkspace((space) => {
-		const state = stateWith();
+		const state = stateWith((current) => setToolset(current, "write", false));
 		for (const toolName of ["write", "edit"]) {
 			const reason = reasonOf(evaluateCall(state, toolName, { path: join(space.project, "a.txt") }, space.project));
 			assert.ok(reason.includes("disabled toolsets"));
@@ -337,6 +337,7 @@ test("scope precedes ask, disabled, and unknown decisions", () => {
 
 test("known disabled tools never produce an unknown decision", () => {
 	const state = defaultState();
+	setToolset(state, "write", false);
 	const decision = evaluateCall(state, "write", {}, process.cwd());
 	assert.equal(decision.block && decision.kind, "disabled");
 	assert.match(reasonOf(decision), /set_toolset/);

@@ -2,7 +2,7 @@
 
 On Linux, `src/index.ts` forwards tool execution to a second Pi process inside a bubblewrap sandbox when a layer is on. The inner Pi uses no real model. A local OpenAI-compatible server supplies tool calls, and RPC returns results and supported dialogs.
 
-The executor follows the two sandbox layers of `/permissions`. The filesystem layer has three states: `off` leaves the host tree open, `read` exposes only the project root and the extra paths, and `read+write` also permits writes there. The no-network layer denies outbound IP traffic. A process boundary is fixed when the process starts, so each layer combination, and each change to the allowed roots, uses its own process.
+The executor follows the two sandbox layers of `/permissions`. The filesystem layer has three states: `off` leaves the host tree open, `read` exposes only the project root and the extra paths, and `read+write` also permits writes there. The network layer forbids outbound IP traffic. A process boundary is fixed when the process starts, so each layer combination, and each change to the allowed roots, uses its own process.
 
 The extension picks the boundary by platform. Linux uses this executor. macOS wraps `bash` only. Windows disables the layers. See [the sandboxes](../README.md#the-sandboxes).
 
@@ -124,7 +124,7 @@ Inner-only direct declarations become outer delegates through `registerTool`. Th
 
 ## Limits
 
-The no-network layer removes IP access.
+The network layer with `FORBID CONNECTIONS` removes IP access.
 
 Two relays connect the sandbox to one host Unix socket each. The tool bridge carries scripted model requests for the executor. The model relay serves one fixed model, `sandbox-parent/parent`, from the outer session, so a subagent keeps the outer credentials: no API key enters the sandbox. The same relay answers permission questions from a child session, and the outer gate decides them.
 

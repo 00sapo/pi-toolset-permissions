@@ -25,7 +25,7 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[
 	},
 	{
 		name: "write",
-		enabled: false,
+		enabled: true,
 		patterns: [
 			"^(write|edit)$",
 			"^hypa_(write|edit)$",
@@ -50,11 +50,7 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[
 		enabled: true,
 		// Delegation only. ask_parent and notify_parent keep their own channel, so a child
 		// reaches its parent whatever this toolset says.
-		patterns: [
-			"^(Agent|subagent|agent)$",
-			"^get_subagent_result$",
-			"^steer_subagent$",
-		],
+		patterns: ["^(Agent|subagent|agent|get_subagent_result|steer_subagent)$"],
 	},
 	{
 		// The permissions toolset holds the permissions tool. It is a normal toolset, so the

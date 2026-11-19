@@ -313,7 +313,8 @@ test("a child without permissions uses ask_parent without changing its allowlist
 	assert.equal(await gate("notify_parent", { message: "Permission change needed." }), undefined);
 	assert.deepEqual(new StateStore().get(), before);
 	assert.equal((await gate("read", { path: "/root/private.txt" })).block, true);
-	assert.equal((await gate("write", { path: join(cwd, "file.txt") })).block, true);
+	// The child inherits the parent policy, where the write toolset now starts on.
+	assert.equal(await gate("write", { path: join(cwd, "file.txt") }), undefined);
 	// A session without the protocol tools gets neither guidance nor an exemption.
 	active.splice(active.indexOf("ask_parent"), 1);
 	assert.equal(await childHandlers.get("before_agent_start")!({ systemPrompt: "No parent tools." }, ctxOf("child-tools", false)), undefined);

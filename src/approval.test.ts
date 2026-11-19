@@ -189,6 +189,11 @@ test("headless requests are denied without a dialog", async (t) => {
 
 test("off and outside-scope targets cannot be approved or enabled", async (t) => {
 	const { cwd, file, store, approvals } = fixture(t);
+	// The write toolset starts on, so this test turns it off first.
+	store.update((state) => ({
+		...state,
+		toolsets: state.toolsets.map((entry) => entry.name === "write" ? { ...entry, enabled: false } : entry),
+	}));
 	const { ctx, selections } = mockContext(cwd, "Allow and enable toolset read");
 	for (const [tool, input] of [
 		["write", { path: "file.txt" }],

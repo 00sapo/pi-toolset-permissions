@@ -146,7 +146,7 @@ The exception list is a list of patterns, and an empty list is valid. `checkPatt
 
 ## Sandbox backends
 
-| Platform | Read-only filesystem | No network |
+| Platform | Filesystem layer | Network layer |
 | --- | --- | --- |
 | Linux | `bwrap --ro-bind / /` | `bwrap --unshare-net`, or `unshare -n` |
 | macOS | `sandbox-exec` with `(deny file-write*)` | `sandbox-exec` with `(deny network*)` |
