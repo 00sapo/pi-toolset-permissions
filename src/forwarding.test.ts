@@ -35,3 +35,14 @@ test("diagnostics omit stack lines and require an explicit exemption", () => {
 	assert.ok(concise("x".repeat(1000)).length <= 240);
 	assert.match(unavailable("foreign"), /explicitly.*Unsandboxed/);
 });
+
+
+test("builtin extension discovery uses exact sources, not tool names", () => {
+	const tools = [
+		{ name: "codemode", sourceInfo: { path: "/third-party/codemode.ts" } },
+		{ name: "codemode", sourceInfo: { path: "builtin:codemode" } },
+		{ name: "tool_search", sourceInfo: { path: "builtin:tool-search" } },
+		{ name: "other", sourceInfo: { path: "builtin:unknown" } },
+	];
+	assert.deepEqual(extensionSources(tools, [], [], "/project"), ["/third-party/codemode.ts", "builtin:codemode", "builtin:tool-search"]);
+});

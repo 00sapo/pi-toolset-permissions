@@ -1,7 +1,14 @@
 import { isAbsolute, dirname, join, resolve } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 
+const BUILTIN_EXTENSION_SOURCES = new Set(["builtin:codemode", "builtin:tool-search"]);
+
+export function isBuiltinExtensionSource(path: unknown): path is string {
+	return typeof path === "string" && BUILTIN_EXTENSION_SOURCES.has(path);
+}
+
 export function canonicalSource(path: string): string {
+	if (isBuiltinExtensionSource(path)) return path;
 	try { return realpathSync(path); } catch { return path; }
 }
 
@@ -17,7 +24,7 @@ export function extensionRoot(path: string, exists = existsSync): string {
 export function extensionSources(tools: Array<any>, own: readonly string[], manual: string[], cwd: string): string[] {
 	const paths = [...tools.filter(tool => !own.includes(tool.sourceInfo?.path))
 		.map(tool => tool.sourceInfo?.path), ...manual.map(path => resolve(cwd, path))];
-	return [...new Set(paths.filter(path => typeof path === "string" && isAbsolute(path)).map(canonicalSource))].sort();
+	return [...new Set(paths.filter(path => typeof path === "string" && (isAbsolute(path) || isBuiltinExtensionSource(path))).map(canonicalSource))].sort();
 }
 
 export function concise(error: unknown): string {
