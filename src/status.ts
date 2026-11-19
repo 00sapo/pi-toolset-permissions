@@ -3,7 +3,7 @@
 import { SANDBOXES } from "./sandboxes.ts";
 import { platformPolicy, requiresBashOnly } from "./platform.ts";
 import type { SandboxTarget } from "./sandbox-scope.ts";
-import { scopeLabel, toolsetMode } from "./types.ts";
+import { networkLabel, scopeLabel, toolsetMode } from "./types.ts";
 import type { PermissionsState } from "./types.ts";
 
 function onOff(value: boolean): string {
@@ -43,7 +43,7 @@ export function statusText(
 		lines.push(`  ${toolset.name} ${toolsetMode(toolset.enabled)} ${marker} patterns=${toolset.patterns.length}`);
 	}
 	lines.push(
-		`sandboxes: filesystem=${state.sandboxes.filesystem} no_network=${onOff(state.sandboxes.no_network)}`,
+		`sandboxes: filesystem=${state.sandboxes.filesystem} network=${networkLabel(state.sandboxes.no_network).toLowerCase()}`,
 	);
 	const policy = platformPolicy(platform);
 	lines.push(`sandbox coverage: ${policy.coverage}`);

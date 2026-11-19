@@ -12,7 +12,7 @@ import { sandboxMenuNote, sandboxRowMark, sandboxSectionTitle } from "./sandbox-
 import { layersEnabled, platformPolicy, requiresBashOnly } from "./platform.ts";
 import type { SandboxTarget } from "./sandbox-scope.ts";
 import type { PermissionsState, FilesystemMode, Toolset } from "./types.ts";
-import { allowsAsk, nextToolsetMode, toolsetMode, scopeLabel } from "./types.ts";
+import { allowsAsk, networkLabel, nextToolsetMode, toolsetMode, scopeLabel } from "./types.ts";
 
 type Row =
 	| { kind: "toolset"; toolset: Toolset }
@@ -96,6 +96,8 @@ export async function openPermissions(
 		const filesystemMode = (mode: FilesystemMode): string => mode === "off"
 			? theme.fg("muted", "[OFF]") : theme.fg("success", `[${mode.toUpperCase()}]`);
 
+		const networkMode = (forbid: boolean): string => theme.fg(forbid ? "warning" : "success", `[${networkLabel(forbid)}]`);
+
 		const modeLabel = (toolset: Toolset): string => toolset.enabled === "ask"
 			? theme.fg("warning", "[ASK]") : onOff(toolset.enabled);
 
@@ -129,7 +131,7 @@ export async function openPermissions(
 						? theme.fg("warning", " [disabled: requires project or custom scope]")
 						: sandboxRowMark(target, platform);
 					const mode = item.info.key === "filesystem"
-						? filesystemMode(state.sandboxes.filesystem) : onOff(state.sandboxes.no_network);
+						? filesystemMode(state.sandboxes.filesystem) : networkMode(state.sandboxes.no_network);
 					return `   ${marker} ${name}${mode}${shown}`;
 				}
 				case "exceptions": {

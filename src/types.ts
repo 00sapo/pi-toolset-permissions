@@ -78,6 +78,11 @@ export interface Classification {
 	askToolsets: string[];
 }
 
+/** The two values of the network layer. The stored flag means "forbid". */
+export function networkLabel(forbid: boolean): string {
+	return forbid ? "FORBID CONNECTIONS" : "ALLOW CONNECTIONS";
+}
+
 export function scopeLabel(scope: ScopeMode): string {
 	return scope === "project" ? "PROJECT ONLY" : scope === "custom" ? "CUSTOM PATHS" : "EVERYWHERE";
 }

@@ -20,8 +20,9 @@ export const SANDBOXES: SandboxInfo[] = [
 	},
 	{
 		key: "no_network",
-		label: "No network",
-		description: "Run bash without network access (bubblewrap, unshare, or Seatbelt on macOS).",
+		label: "Network",
+		// The row label names the subject, so the value names what the layer allows.
+		description: "Allow or forbid network access for the sandboxed tools (bubblewrap, unshare, or Seatbelt on macOS).",
 	},
 ];
 

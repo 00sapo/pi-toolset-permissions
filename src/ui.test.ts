@@ -243,8 +243,9 @@ test("a filesystem layer at off uses the same grey mark as the other off states"
  const lines = screen.render(120);
  const row = lines.find((line) => line.includes("Filesystem"))!;
  assert.match(row, /\x1b\[38;5;4m\[OFF\]\x1b\[39m/, "The filesystem off mark uses the muted color");
- const network = lines.find((line) => line.includes("No network"))!;
- assert.match(network, /\x1b\[38;5;4m\[OFF\]\x1b\[39m/);
+ // The network row names the allow value, so its off state reads differently.
+ const network = lines.find((line) => line.includes("Network"))!;
+ assert.match(network, /\[ALLOW CONNECTIONS\]/);
 });
 
 test("the exceptions list opens, shows matches, and edits like a pattern list", async () => {
