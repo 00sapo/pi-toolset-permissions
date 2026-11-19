@@ -20,7 +20,7 @@ The `permissions` toolset supports only the on and off states. Each change throu
 4. Approval. Ask mode requires a model reason and an exact-call approval. Unknown tools keep their separate question.
 5. Sandbox. The bash tool wrapper starts the command inside the operating-system boundary.
 6. Tool. The `permissions` tool reads the state and changes it after the user agrees.
-7. Screen. The `/permissions` command opens a small screen for the same state. The screen has two views. The list view holds the toolsets, the sandboxes, the scope, and the paths. The pattern view shows one toolset: each pattern with the tool names that it matches, and the keys to edit, add, and delete a pattern.
+7. Screen. The `/permissions` command opens a small screen for the same state. The main view holds toolsets, sandboxes, and scope. Custom Paths under Scope opens the path submenu. The pattern view shows one toolset: each pattern with the tool names that it matches, and the keys to edit, add, and delete a pattern.
 
 ## Call flow
 
@@ -64,7 +64,7 @@ A shutdown with a dialog still open emits one closing event, so a pane never sta
 
 A tool that must run on the host keeps the host implementation, even while a layer is on. The state file holds the exception list as regular expressions, and the executor tests each pattern against the tool name. A pattern that does not compile matches nothing, so a broken entry never removes the boundary from another tool.
 
-The list belongs to the user alone. The screen opens it from the Exceptions row, and `set_unsandboxed_tools` keeps it behind a confirmation that names every pattern. The covered tools stay inside the boundary, so the list is the one place where a tool leaves it.
+The list belongs to the user alone. The screen opens it from Unsandboxed tools inside Sandboxes, and `set_unsandboxed_tools` keeps it behind a confirmation that names every pattern. The covered tools stay inside the boundary, so the list is the one place where a tool leaves it.
 
 ## Subagent sessions
 
@@ -129,6 +129,12 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 ## State
 
 The defaults are the read toolset on, the write toolset off, the execute toolset on, the `permissions` toolset on, project scope, no extra paths, and both sandboxes off. The exception list is empty, so every tool stays inside the boundary.
+
+State version 3 adds custom scope. Project scope exposes only the project root. Custom scope also exposes saved extra paths.
+
+Older project state with extras migrates to custom. Explicit version 3 project state keeps extras inactive without deleting them.
+
+The gate, the isolated executor, and shell backends use the same selected roots. Everywhere turns the filesystem layer off.
 
 `mergeState` accepts unknown JSON and repairs it. It fills missing fields, drops invalid toolsets, restores the four shipped toolsets, and caps the list sizes.
 
