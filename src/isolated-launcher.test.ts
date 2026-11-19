@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { hostname } from "node:os";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HOST_NAME, HOME_AGENT_DIR, HOME_MIRROR, accountFiles, buildIsolatedLaunch, homeMounts, parentDirectories, systemMounts } from "./isolated-launcher.ts";
+import { HOST_NAME, HOME_AGENT_DIR, HOME_MIRROR, accountFiles, bindableMounts, buildIsolatedLaunch, crossesLink, homeMounts, parentDirectories, systemMounts } from "./isolated-launcher.ts";
 
 const options = {
 	socketPath: "/tmp/private bridge/model.sock", token: "test-token", cwd: "/workspace/project",
@@ -558,4 +558,60 @@ test("Hypa mounts read-only at its canonical path and its alias without a broad 
 	const plain = buildIsolatedLaunch(options, dependencies);
 	assert.equal("PI_BRIDGE_HYPA" in plain.env, false);
 	assert.equal(mounts(plain.args).some(bind => bind.source.includes("hypa")), false);
+});
+
+test("crossesLink sees a symlink in the host tree between a mount and a nested path", () => {
+	const link = (path: string) => (path === "/a/b/link" ? "/a/b/real" : null);
+	assert.equal(crossesLink("/a", "/a/b/link/file", link), true);
+	assert.equal(crossesLink("/a/b/link", "/a/b/link/file", link), false);
+	assert.equal(crossesLink("/a/b", "/a/b/plain/file", link), false);
+	assert.equal(crossesLink("/x", "/a/b/link/file", link), false);
+});
+
+test("a bind never targets a symlink that a parent bind already shows", () => {
+	// The shims directory holds `hypa` as a symlink to the real program, which is what a
+	// version manager writes. Binding the directory first would put that symlink in place,
+	// and the second bind would fail.
+	const mounts = new Map([["/home/u/.local/share/mise/shims", { writable: false }], ["/home/u/.local/share/mise/shims/hypa", { writable: false }]]);
+	const link = (path: string) => (path === "/home/u/.local/share/mise/shims/hypa" ? "/home/u/.local/bin/mise" : null);
+	const canonical = (path: string) => (path === "/home/u/.local/share/mise/shims/hypa" ? "/home/u/.local/bin/mise" : path);
+	// The nested path becomes a bind of the file that the link names, so the link inside
+	// the bound directory resolves instead of dangling.
+	assert.deepEqual(bindableMounts(mounts, link, canonical), [
+		{ path: "/home/u/.local/share/mise/shims", writable: false },
+		{ path: "/home/u/.local/bin/mise", writable: false },
+	]);
+	// When that target is already visible, as a PATH directory makes it, nothing is added.
+	const covered = new Map([...mounts, ["/home/u/.local/bin", { writable: false }]]);
+	assert.deepEqual(bindableMounts(covered, link, canonical), [
+		{ path: "/home/u/.local/bin", writable: false },
+		{ path: "/home/u/.local/share/mise/shims", writable: false },
+	]);
+});
+
+test("a symlinked PATH directory binds its target so the program stays reachable", () => {
+	const mounts = new Map([["/opt/zoxide/latest", { writable: false }]]);
+	const link = () => null;
+	const found = bindableMounts(mounts, link, () => "/opt/zoxide/0.10.0");
+	// No parent mount in the list, so the entry keeps its own bind and applies normally.
+	assert.deepEqual(found, [{ path: "/opt/zoxide/latest", writable: false }]);
+});
+
+test("a symlink cannot pull a system tree into the sandbox", () => {
+	const mounts = new Map([["/home/u/bin", { writable: false }], ["/home/u/bin/tool", { writable: false }]]);
+	const link = (path: string) => (path === "/home/u/bin/tool" ? "/usr/bin/tool" : null);
+	const found = bindableMounts(mounts, link, () => "/usr/bin/tool");
+	assert.deepEqual(found, [{ path: "/home/u/bin", writable: false }]);
+});
+
+test("parents bind before children and a writable child keeps its mode", () => {
+	const mounts = new Map([["/w/project/sub/file.txt", { writable: true }], ["/w/project", { writable: true }]]);
+	const found = bindableMounts(mounts, () => null, (path) => path);
+	assert.deepEqual(found, [{ path: "/w/project", writable: true }, { path: "/w/project/sub/file.txt", writable: true }]);
+});
+
+test("a nested mount with no symlink in between still applies", () => {
+	const mounts = new Map([["/w/project", { writable: false }], ["/w/project/ext", { writable: false }]]);
+	const found = bindableMounts(mounts, () => null, (path) => path);
+	assert.equal(found.length, 2);
 });

@@ -125,6 +125,91 @@ export function containsPath(root: string, path: string): boolean {
  return root === "/" || path === root || path.startsWith(`${root}/`);
 }
 
+/** The number of path components, so that a parent sorts before its children. */
+function depth(path: string): number {
+	return resolve(path).split("/").filter(Boolean).length;
+}
+
+/** The path components strictly between `root` and `path`, which `root` contains. */
+function componentsBetween(root: string, path: string): string[] {
+	return path.slice(root.length + 1).split("/").filter(Boolean);
+}
+
+/**
+ * True when the sandbox shows a symlink between a mounted directory and a nested path.
+ *
+ * A bound directory keeps the host tree unchanged, symlinks included, so the nested path
+ * is a symlink inside the sandbox too. bwrap refuses a bind on a symlink destination, and
+ * the mount would fail even though the host path looks ordinary.
+ */
+export function crossesLink(
+	root: string,
+	path: string,
+	link: (path: string) => string | null = (value) => {
+		try {
+			return readlinkSync(value);
+		} catch {
+			return null;
+		}
+	},
+): boolean {
+	if (!containsPath(root, path) || root === path) return false;
+	let current = root;
+	for (const component of componentsBetween(root, path)) {
+		current = `${current}/${component}`;
+		if (link(current) !== null) return true;
+	}
+	return false;
+}
+
+/**
+ * The binds that bwrap can apply, in an order where every parent comes first.
+ *
+ * A nested mount passes through a directory that another mount already binds. When the
+ * host path between them is a symlink, the bind cannot land on that link. The link itself
+ * already names the file, so the nested bind becomes a bind of its resolved target, and it
+ * disappears when a kept mount makes that target visible already.
+ *
+ * Nothing here drops a path that stays invisible: a mount with no link in between, or one
+ * whose target no other mount covers, keeps its own bind.
+ */
+export function bindableMounts(
+	mounts: ReadonlyMap<string, { writable: boolean }>,
+	link: (path: string) => string | null = (value) => {
+		try {
+			return readlinkSync(value);
+		} catch {
+			return null;
+		}
+	},
+	canonical: (path: string) => string = realpathSync,
+): Array<{ path: string; writable: boolean }> {
+	const kept: Array<{ path: string; writable: boolean }> = [];
+	const ordered = [...mounts.keys()].sort((a, b) => depth(a) - depth(b) || a.localeCompare(b));
+	for (const path of ordered) {
+		const writable = mounts.get(path)!.writable === true;
+		const shadowed = kept.some((entry) => crossesLink(entry.path, path, link));
+		if (!shadowed) {
+			kept.push({ path, writable });
+			continue;
+		}
+		// A symlink already shows the file through the parent mount. Bind the target that
+		// the link names, unless a kept mount already makes it visible.
+		let target: string;
+		try {
+			target = canonical(path);
+		} catch {
+			continue;
+		}
+		if (target === path || kept.some((entry) => containsPath(entry.path, target))) continue;
+		if (kept.some((entry) => crossesLink(entry.path, target, link))) continue;
+		// A link inside a home or agent entry must not pull a system tree into view.
+		if (reservedForSandbox(target) && !reservedForSandbox(path)) continue;
+		kept.push({ path: target, writable });
+	}
+	return kept;
+}
+
 /** Canonical roots must not replace the private runtime or system mounts. */
 export function canonicalRoots(paths: string[], canonical: (path: string) => string = realpathSync): string[] {
  const protectedPaths = ["/run", "/proc", "/dev", "/sys", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64"];
@@ -508,7 +593,15 @@ export function buildIsolatedLaunch(
 
 	// A mount point must exist inside the sandbox before a bind targets it.
 	const created = new Set([...reserved, "/tmp/home"]);
-	const targets = [...(restricted ? mounts.keys() : []), ...mirrored.map((entry) => entry.target), ...homeMirrored.map((entry) => entry.target)].sort();
+	// A bind below another mount cannot land on a host symlink, which the parent mount
+	// shows unchanged. `bindableMounts` resolves that case before the args are written.
+	const binds = restricted ? bindableMounts(mounts, dependencies.readLink, canonical) : [];
+	// A resolved bind can name a path outside the mount list, so its parents need a mount point too.
+	const targets = [...new Set([
+		...binds.map((entry) => entry.path),
+		...mirrored.map((entry) => entry.target),
+		...homeMirrored.map((entry) => entry.target),
+	])].sort();
 	for (const path of targets) {
 		for (const dir of parentDirectories(path)) {
 			if (created.has(dir)) continue;
@@ -516,9 +609,7 @@ export function buildIsolatedLaunch(
 			args.push("--dir", dir);
 		}
 	}
-	for (const path of restricted ? [...mounts.keys()].sort() : []) {
-		args.push(mounts.get(path)!.writable ? "--bind" : "--ro-bind", path, path);
-	}
+	for (const entry of binds) args.push(entry.writable ? "--bind" : "--ro-bind", entry.path, entry.path);
 	for (const entry of mirrored) args.push("--ro-bind", entry.source, entry.target);
 	for (const entry of homeMirrored) args.push("--ro-bind", entry.source, entry.target);
 
