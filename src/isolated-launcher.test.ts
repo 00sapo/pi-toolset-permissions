@@ -23,6 +23,7 @@ const dependencies = {
 	readLink: (path: string) => hostLinks[path] ?? null,
 };
 const relay = fileURLToPath(new URL("./inner-relay.ts", import.meta.url));
+const modelRelay = fileURLToPath(new URL("./inner-model.ts", import.meta.url));
 const inventory = fileURLToPath(new URL("./inner-inventory.ts", import.meta.url));
 const sandboxSocket = "/run/pi-bridge/model.sock";
 
@@ -52,7 +53,7 @@ test("home, credentials, and other users stay out of the sandbox", () => {
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	// The relay file and the project are code and work data, and a project usually sits
 	// below /home. Every other path in that tree must stay out of the sandbox.
-	const allowed = new Set([relay, inventory, "/workspace/project", "/workspace/project/extension one.ts", "/usr/bin", "/opt/pi/bin"]);
+	const allowed = new Set([relay, inventory, modelRelay, "/workspace/project", "/workspace/project/extension one.ts", "/usr/bin", "/opt/pi/bin"]);
 	for (const hidden of ["/home", "/root", "/mnt", "/media", "/srv", "/var"]) {
 		for (const bind of mounts(args)) {
 			if (allowed.has(bind.source)) continue;
@@ -69,7 +70,7 @@ test("only the system directories, the executables, the project, and the extensi
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	assert.deepEqual(mounts(args).map((bind) => bind.source).sort(), [
 		"/etc/nsswitch.conf", "/etc/ssl/certs", "/opt/extensions", "/opt/pi/bin", "/opt/pi/bin/pi", "/usr", "/usr/bin",
-		"/usr/bin/node", relay, inventory, "/workspace/project", options.socketPath,
+		"/usr/bin/node", relay, inventory, modelRelay, "/workspace/project", options.socketPath,
 	].sort());
 });
 
@@ -174,11 +175,13 @@ test("environment is an allowlist, not inherited credentials or loader settings"
 		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/run/pi-home", LANG: "C.UTF-8", TERM: "xterm",
 		PI_TOOLSET_INNER: "1", PI_BRIDGE_GENERATE_ACCOUNTS: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
 		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent-private", HOSTNAME: HOST_NAME,
+		PI_BRIDGE_MODEL_EXTENSION: modelRelay,
 	});
 	assert.deepEqual(buildIsolatedLaunch(options, { ...dependencies, env: {} }).env, {
 		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/run/pi-home", LANG: "C.UTF-8", TERM: "dumb",
 		PI_TOOLSET_INNER: "1", PI_BRIDGE_GENERATE_ACCOUNTS: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
 		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent-private", HOSTNAME: HOST_NAME,
+		PI_BRIDGE_MODEL_EXTENSION: modelRelay,
 	});
 	if (hostname() !== HOST_NAME) assert.equal(JSON.stringify(plan).includes(hostname()), false, "the host name must not reach the sandbox");
 	for (const name of ["OPENAI_API_KEY", "NODE_OPTIONS", "HTTP_PROXY", "LD_PRELOAD", "PI_CODING_AGENT_DIR_HOST"]) {
@@ -423,4 +426,32 @@ test("only known builtin extensions pass through without filesystem mounts", () 
 	for (const path of ["builtin:other", "builtin:codemode/../mcp", "builtin:codemode\0", "builtin:tool_search"]) {
 		assert.throws(() => buildIsolatedLaunch({...options, extensions:[path]}, dependencies), /explicit filesystem paths/);
 	}
+});
+
+test("runtime binds never mask writable user roots, but read mode stays read-only", () => {
+ const project = fileURLToPath(new URL('../',import.meta.url)).replace(/\/$/,'');
+ for(const filesystem of ['read','read+write'] as const) {
+  const {args} = buildIsolatedLaunch({...options,cwd:project,paths:[project],extensions:[],filesystem},dependencies);
+  const found = mounts(args);
+  assert.equal(found.find(m=>m.source === project)?.mode,filesystem === 'read' ? '--ro-bind':'--bind');
+  for(const runtime of [relay,inventory,modelRelay]) assert.equal(found.some(m=>m.source === runtime),false);
+ }
+});
+
+test("Hypa mounts read-only at its canonical path and its alias without a broad home mount", () => {
+	const alias = "/home/test/.local/bin/hypa";
+	const canonicalPath = "/home/test/.local/share/mise/installs/hypa/1.2.0/hypa";
+	const plan = buildIsolatedLaunch(options, { ...dependencies, findExecutable: (name, path) =>
+		({ bwrap: "/usr/bin/bwrap", pi: "/opt/pi/bin/pi", node: "/usr/bin/node", hypa: alias } as Record<string, string>)[name] ?? null,
+		realPath: (path: string) => path === alias ? canonicalPath : path });
+	const found = mounts(plan.args);
+	assert.deepEqual(found.filter(bind => bind.source.includes("hypa")).map(bind => bind.source).sort(), [canonicalPath, alias].sort());
+	for (const bind of found.filter(bind => bind.source.includes("hypa"))) assert.equal(bind.mode, "--ro-bind");
+	assert.equal(plan.env.PI_BRIDGE_HYPA, canonicalPath);
+	assert.equal(found.some(bind => bind.source === "/home/test" || bind.source === "/home/test/.local"), false);
+	assert.equal(plan.args.includes("/home/test/.config") || plan.args.includes("/home/test/.ssh"), false);
+	// Without an installed Hypa nothing is mounted and no variable claims one.
+	const plain = buildIsolatedLaunch(options, dependencies);
+	assert.equal("PI_BRIDGE_HYPA" in plain.env, false);
+	assert.equal(mounts(plain.args).some(bind => bind.source.includes("hypa")), false);
 });

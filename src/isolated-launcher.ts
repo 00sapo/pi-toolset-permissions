@@ -300,6 +300,7 @@ export function buildIsolatedLaunch(
 	if (!["off", "read", "read+write"].includes(options.filesystem)) throw new Error("Invalid filesystem mode.");
 	if (!Array.isArray(options.paths)) throw new Error("paths must be an array.");
 	const restricted = options.filesystem !== "off";
+	const modelRelayPath = fileURLToPath(new URL("./inner-model.ts", import.meta.url));
 
 	// Resolved with the host PATH, then replaced by the directories that the sandbox mounts.
 	const hostPath = dependencies.env.PATH ?? "/usr/bin:/bin";
@@ -315,6 +316,9 @@ export function buildIsolatedLaunch(
 		PI_SKIP_VERSION_CHECK: "1",
 		PI_TELEMETRY: "0",
 		PI_CODING_AGENT_DIR: "/run/pi-agent-private",
+		// The relay writes the extension into the private settings so that the root and
+		// every child session load it exactly once through normal resource discovery.
+		PI_BRIDGE_MODEL_EXTENSION: modelRelayPath,
 		// A fixed host name. The default would show the name of the host machine.
 		HOSTNAME: HOST_NAME,
 	};
@@ -331,6 +335,7 @@ export function buildIsolatedLaunch(
 	const pi = executable(options.piPath ?? "pi");
 	const node = executable(options.nodePath ?? "node");
 	const relay = canonical(fileURLToPath(new URL("./inner-relay.ts", import.meta.url)));
+	const modelRelay = canonical(modelRelayPath);
 	const inventory = canonical(fileURLToPath(new URL("./inner-inventory.ts", import.meta.url)));
 	const workdir = canonical(resolve(options.cwd));
 	const extensions = options.extensions.map((path) => {
@@ -357,7 +362,7 @@ export function buildIsolatedLaunch(
 	for (const path of extensions.filter(path => !isBuiltinExtensionSource(path))) addMount(extensionRoot(path, exists), false);
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
-	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory]) addMount(path, false);
+	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory, modelRelay]) addMount(path, false);
 	// `/etc` is mounted entry by entry. The account databases are generated instead of copied,
 	// so host user names and home paths do not enter the sandbox.
 	for (const entry of etcMounts(exists, options.etcFiles ?? ETC_FILES, options.etcDirectories ?? ETC_DIRECTORIES)) {
@@ -381,6 +386,18 @@ export function buildIsolatedLaunch(
 	if (restricted && agentDir !== undefined && agentEntries.length > 0) {
 		env.PI_BRIDGE_HOST_AGENT_DIR = agentDir;
 		env.PI_BRIDGE_AGENT_ENTRIES = agentEntries.map((entry) => entry.source.slice(agentDir.length + 1)).join(",");
+	}
+	// Optional Hypa runtime. Keep both the canonical binary and the alias used by host rewrites.
+	const hypaAlias = dependencies.findExecutable("hypa", hostPath);
+	if (hypaAlias) {
+		const hypa = canonical(hypaAlias);
+		addMount(hypa, false);
+		if (hypaAlias !== hypa) addMount(hypaAlias, false);
+		env.PI_BRIDGE_HYPA = hypa;
+	}
+	// A redundant runtime bind must not mask a writable project subtree.
+	for (const path of writable.keys()) {
+		if (roots.some(root => root !== path && containsPath(root, path))) writable.delete(path);
 	}
 	const mounts = new Map<string, { source: string; writable: boolean }>();
 	for (const path of writable.keys()) mounts.set(path, { source: path, writable: writable.get(path) === true });
@@ -457,6 +474,7 @@ export function buildIsolatedLaunch(
 		"--offline",
 		...extensions.flatMap((path) => ["--extension", path]),
 		"--extension", inventory,
+		"--extension", modelRelay,
 	);
 	return { command, args, env };
 }
