@@ -12,23 +12,25 @@ import { sandboxMenuNote, sandboxRowMark, sandboxSectionTitle } from "./sandbox-
 import { layersEnabled, platformPolicy, requiresBashOnly } from "./platform.ts";
 import type { SandboxTarget } from "./sandbox-scope.ts";
 import type { PermissionsState, FilesystemMode, Toolset } from "./types.ts";
-import { allowsAsk, nextToolsetMode, toolsetMode } from "./types.ts";
+import { allowsAsk, nextToolsetMode, toolsetMode, scopeLabel } from "./types.ts";
 
 type Row =
 	| { kind: "toolset"; toolset: Toolset }
 	| { kind: "sandbox"; info: SandboxInfo }
 	| { kind: "exceptions" }
 	| { kind: "scope" }
+	| { kind: "paths" }
 	| { kind: "path"; path: string; root: boolean };
 
-type View = { kind: "main" } | { kind: "patterns"; name: string } | { kind: "exceptions" };
+type View = { kind: "main" } | { kind: "patterns"; name: string } | { kind: "exceptions" } | { kind: "paths" };
 
 const SECTION: Record<Row["kind"], string> = {
 	toolset: "Toolsets",
 	sandbox: "Sandboxes",
-	exceptions: "Exceptions",
+	exceptions: "Sandboxes",
 	scope: "Scope",
-	path: "Paths",
+	path: "Custom Paths",
+	paths: "Scope",
 };
 
 const LABEL_WIDTH = 24;
@@ -105,12 +107,10 @@ export async function openPermissions(
 			// Windows and other systems without a backend hide the whole Sandboxes section.
 			if (sandboxesEnabled) {
 				for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
+				rows.push({ kind: "exceptions" });
 			}
-			rows.push({ kind: "exceptions" });
 			rows.push({ kind: "scope" });
-			[ctx.cwd, ...state.extra_paths].forEach((path, position) => {
-				rows.push({ kind: "path", path, root: position === 0 });
-			});
+			rows.push({ kind: "paths" });
 			return rows;
 		};
 
@@ -126,7 +126,7 @@ export async function openPermissions(
 				case "sandbox": {
 					const name = clip(item.info.label, labelWidth).padEnd(labelWidth);
 					const shown = item.info.key === "filesystem" && state.scope === "everywhere"
-						? theme.fg("warning", " [disabled: requires project scope]")
+						? theme.fg("warning", " [disabled: requires project or custom scope]")
 						: sandboxRowMark(target, platform);
 					const mode = item.info.key === "filesystem"
 						? filesystemMode(state.sandboxes.filesystem) : onOff(state.sandboxes.no_network);
@@ -138,11 +138,13 @@ export async function openPermissions(
 					return `   ${marker} ${"Unsandboxed tools".padEnd(labelWidth)}${note}`;
 				}
 				case "scope":
-					return `   ${marker} ${"All paths".padEnd(labelWidth)}[${state.scope.toUpperCase()}]`;
+					return `   ${marker} ${"Modality".padEnd(labelWidth)}[${scopeLabel(state.scope)}]`;
+				case "paths":
+					return `   ${marker} ${"Custom Paths".padEnd(labelWidth)}${theme.fg("dim", ` ${state.extra_paths.length} extra paths`)}`;
 				case "path": {
-					const name = clip(item.path, Math.max(8, width - 10));
-					const note = item.root ? theme.fg("dim", "  project root") : "";
-					return `   ${marker} ${name}${note}`;
+					return item.root
+						? `   ${marker} Project root  ${theme.fg("dim", item.path)}`
+						: `   ${marker} ${item.path}`;
 				}
 			}
 		};
@@ -152,7 +154,7 @@ export async function openPermissions(
 			const lines = [` ${theme.bold("Permissions")}`, ""];
 			let section: string | null = null;
 			rows.forEach((item, position) => {
-				const title = item.kind === "sandbox" ? sandboxSectionTitle(platform) : SECTION[item.kind];
+				const title = (item.kind === "sandbox" || item.kind === "exceptions") ? sandboxSectionTitle(platform) : SECTION[item.kind];
 				if (title !== section) {
 					section = title;
 					if (position > 0) lines.push("");
@@ -162,13 +164,16 @@ export async function openPermissions(
 						for (const note of sandboxMenuNote(target, platform)) lines.push(theme.fg("dim", `     ${note}`));
 					}
 				}
+				if (item.kind === "scope") {
+					lines.push(theme.fg("dim", "     Scope defines the paths exposed to the read and write toolsets and to the sandboxed tools."));
+				}
 				lines.push(rowText(state, item, position === index, width));
 				const next = rows[position + 1];
 				if (item.kind === "sandbox" && (next === undefined || next.kind !== "sandbox")) {
-					if (state.scope === "everywhere") lines.push(theme.fg("dim", "     Filesystem is disabled. Select project scope to use it."));
+					if (state.scope === "everywhere") lines.push(theme.fg("dim", "     Filesystem is disabled. Select project or custom scope to use it."));
 				}
 				if (item.kind === "exceptions") {
-					lines.push(theme.fg("dim", " Matching tools run on the host even while a layer is on."));
+					lines.push(theme.fg("dim", "     Unsandboxed tools run on the host even while a layer is on."));
 				}
 			});
 			lines.push(
@@ -177,7 +182,7 @@ export async function openPermissions(
 				theme.fg("dim", " The permissions toolset has only OFF and ON."),
 				theme.fg("dim", " If several toolsets match, ON takes priority over ASK and OFF."),
 				theme.fg("dim", " j/k move · l enter · h back · space off → on → ask"),
-				theme.fg("dim", " s scope · a add path · d remove path"),
+				theme.fg("dim", " s scope · enter Custom Paths to manage paths"),
 			);
 			return lines;
 		};
@@ -223,7 +228,7 @@ export async function openPermissions(
 		const renderScreen = (state: PermissionsState, width: number): string[] =>
 			view.kind === "patterns" ? renderPatterns(state, width)
 				: view.kind === "exceptions" ? renderExceptions(state, width)
-					: renderMain(state, width);
+					: view.kind === "paths" ? renderPaths(state, width) : renderMain(state, width);
 
 		/** The exception list. Same keys and layout as a toolset pattern list. */
 		const renderExceptions = (state: PermissionsState, width: number): string[] => {
@@ -248,8 +253,20 @@ export async function openPermissions(
 			return lines;
 		};
 
+		const pathRows = (state: PermissionsState): Extract<Row, { kind: "path" }>[] =>
+			[ctx.cwd, ...state.extra_paths].map((path, position) => ({ kind: "path", path, root: position === 0 }));
+
+		const renderPaths = (state: PermissionsState, width: number): string[] => [
+			` ${theme.bold("Permissions")} ${theme.fg("dim", "›")} ${theme.bold("Custom Paths")}`,
+			theme.fg("dim", "     Custom scope exposes the project root plus these extra paths."),
+			"",
+			...pathRows(state).map((item, position) => rowText(state, item, position === patternIndex, width)),
+			"",
+			theme.fg("dim", " j/k move · a add · d remove · h/esc back"),
+		];
+
 		const cycleScope = (): void => {
-			update((current) => ({ ...current, scope: current.scope === "project" ? "everywhere" : "project" }));
+			update((current) => ({ ...current, scope: current.scope === "project" ? "everywhere" : current.scope === "everywhere" ? "custom" : "project" }));
 		};
 
 		const toggleToolset = (toolset: Toolset): void => {
@@ -270,7 +287,7 @@ export async function openPermissions(
 				return;
 			}
 			if (info.key === "filesystem" && store.get().scope === "everywhere") {
-				notify("Filesystem requires project scope. Select project scope first.", "warning");
+				notify("Filesystem requires project or custom scope. Select project or custom scope first.", "warning");
 				refresh();
 				return;
 			}
@@ -309,11 +326,24 @@ export async function openPermissions(
 				return;
 			}
 			const target = checked.path;
+			const state = store.get();
+			if (canonicalPath(ctx.cwd) === target || state.extra_paths.some((entry) => canonicalPath(entry) === target)) {
+				notify(`${target} is already saved or is the project root.`, "warning");
+				refresh();
+				return;
+			}
+			if (state.scope !== "custom" && state.extra_paths.length > 0) {
+				const proceed = await ctx.ui.confirm(
+					"Select CUSTOM PATHS?",
+					"Adding this directory selects CUSTOM PATHS. The project root and all saved extra paths become allowed.",
+				);
+				if (proceed !== true) { refresh(); return; }
+			}
 			let added = false;
 			update((current) => {
-				if (current.extra_paths.some((entry) => canonicalPath(entry) === target)) return current;
+				if (canonicalPath(ctx.cwd) === target || current.extra_paths.some((entry) => canonicalPath(entry) === target)) return current;
 				added = true;
-				return { ...current, extra_paths: [...current.extra_paths, target] };
+				return { ...current, scope: "custom", extra_paths: [...current.extra_paths, target] };
 			});
 			notify(added ? `Added ${target}.` : `${target} is already allowed.`, added ? "info" : "warning");
 			refresh();
@@ -468,14 +498,15 @@ export async function openPermissions(
 			if (item.kind === "toolset") toggleToolset(item.toolset);
 			else if (item.kind === "sandbox") void toggleSandbox(item.info);
 			else if (item.kind === "scope") cycleScope();
+			else if (item.kind === "paths") openSelected();
 			refresh();
 		};
 
 		const openSelected = (): void => {
 			const item = buildRows(store.get())[index];
 			if (item === undefined) return;
-			if (item.kind === "exceptions") {
-				view = { kind: "exceptions" };
+			if (item.kind === "exceptions" || item.kind === "paths") {
+				view = { kind: item.kind };
 				patternIndex = 0;
 				refresh();
 				return;
@@ -591,19 +622,8 @@ export async function openPermissions(
 				return;
 			}
 			if (data === "d") {
-				const item = rows[index];
-				if (item === undefined) return;
-				if (item.kind !== "path") {
-					notify("Select a path first. Press a to add one.", "warning");
-					refresh();
-					return;
-				}
-				if (item.root) {
-					notify("The project root cannot be removed.", "warning");
-					refresh();
-					return;
-				}
-				removePath(item.path);
+				notify("Open Custom Paths to remove an extra path.", "warning");
+				refresh();
 				return;
 			}
 			if (data === " ") {
@@ -615,9 +635,28 @@ export async function openPermissions(
 			}
 		};
 
+		const handlePathsInput = (data: string): void => {
+			const rows = pathRows(store.get());
+			patternIndex = Math.min(patternIndex, rows.length - 1);
+			if (data === "h" || keybindings.matches(data, "tui.select.cancel")) view = { kind: "main" };
+			else if (data === "j" || keybindings.matches(data, "tui.select.down")) patternIndex = (patternIndex + 1) % rows.length;
+			else if (data === "k" || keybindings.matches(data, "tui.select.up")) patternIndex = (patternIndex - 1 + rows.length) % rows.length;
+			else if (data === "a") { void addPath(); return; }
+			else if (data === "d") {
+				const item = rows[patternIndex];
+				if (item.root) notify("The project root cannot be removed.", "warning");
+				else {
+					removePath(item.path);
+					patternIndex = Math.min(patternIndex, pathRows(store.get()).length - 1);
+				}
+			}
+			refresh();
+		};
+
 		const handleInput = (data: string): void => {
 			if (view.kind === "patterns") handlePatternsInput(data);
 			else if (view.kind === "exceptions") handleExceptionsInput(data);
+			else if (view.kind === "paths") handlePathsInput(data);
 			else handleMainInput(data);
 		};
 

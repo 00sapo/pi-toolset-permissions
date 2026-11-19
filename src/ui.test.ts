@@ -74,11 +74,11 @@ type Screen = {
 	invalidate(): void;
 };
 
-async function screenFixture(scope: "project" | "everywhere" = "everywhere", platform: NodeJS.Platform = "linux", target: SandboxTarget = "all-tools") {
+async function screenFixture(scope: "project" | "everywhere" | "custom" = "everywhere", platform: NodeJS.Platform = "linux", target: SandboxTarget = "all-tools") {
 	const longName = "界🧪e\u0301".repeat(24);
 	const patterns = ["^界🧪e\u0301" + "長".repeat(80), "^second_", "^third_"];
 	let state: PermissionsState = {
-		version: 2,
+		version: 3,
 		scope,
 		extra_paths: ["/extra/" + "資料🧪e\u0301/".repeat(30)],
 		toolsets: [
@@ -89,6 +89,9 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 		unsandboxed_tools: ["^exempt_tool$"],
 	};
 	const notifications: string[] = [];
+	const inputs: Array<string | undefined> = [];
+	const confirmations: string[] = [];
+	let consent = false;
 	const edits: Array<{ title: string; value: string }> = [];
 	let screen!: Screen;
 	let renders = 0;
@@ -101,6 +104,8 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 		mode: "tui",
 		cwd: "/project/" + "研究🧪e\u0301/".repeat(30),
 		ui: {
+			input: async () => inputs.shift(),
+			confirm: async (_title: string, message: string) => { confirmations.push(message); return consent; },
 			notify: (text: string) => notifications.push(text),
 			editor: async (title: string, value: string) => {
 				edits.push({ title, value });
@@ -120,7 +125,7 @@ async function screenFixture(scope: "project" | "everywhere" = "everywhere", pla
 		},
 	} as unknown as ExtensionContext;
 	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName, "exempt_tool"], target, platform);
-	return { state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
+	return { inputs, confirmations, setConsent: (value: boolean) => { consent = value; }, state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
 }
 
 function assertFits(screen: Screen, width: number): string[] {
@@ -137,12 +142,13 @@ for (const width of [83, 40, 20]) {
 	test(`main view fits ${width} terminal cells with long Unicode names and paths`, async () => {
 		const { screen } = await screenFixture();
 		const lines = assertFits(screen, width);
-		for (const heading of ["Permissions", "Toolsets", "Sandboxes", "Scope", "Paths"]) {
+		for (const heading of ["Permissions", "Toolsets", "Sandboxes", "Scope"]) {
 			assert.ok(lines.some((line) => line === ` ${heading}` || line.startsWith(` ${heading} (`)), `Missing ${heading} section`);
 		}
 		assert.ok(lines.some((line) => line.startsWith("   > 界")));
-		assert.ok(lines.some((line) => line.includes("/project/")));
-		assert.ok(lines.some((line) => line.includes("/extra/")));
+		assert.ok(lines.some((line) => line.includes("Custom Paths")));
+		assert.ok(!lines.some((line) => line.includes("/project/")));
+		assert.ok(!lines.includes(" Paths"));
 		// Exercise width-dependent caching during terminal resizing.
 		assertFits(screen, width === 83 ? 20 : 83);
 		assert.deepEqual(assertFits(screen, width), lines);
@@ -209,8 +215,8 @@ test("filesystem menu cycles modes and scope resets through the store", async ()
  assert.equal(fixture.state().sandboxes.filesystem, "off");
  screen.handleInput(" "); await Promise.resolve();
  assert.equal(fixture.state().sandboxes.filesystem, "off");
- assert.match(fixture.notifications.join("\n"), /project scope/);
- assert.match(assertFits(screen, 120).join("\n"), /project scope/);
+ assert.match(fixture.notifications.join("\n"), /project or custom scope/);
+ assert.match(assertFits(screen, 120).join("\n"), /project or custom scope/);
 });
 test("Windows keeps filesystem disabled", async () => {
  const fixture = await screenFixture("project", "win32");
@@ -225,7 +231,7 @@ test("the coverage note sits under the Sandboxes title, before the rows", async 
  const linux = assertFits((await screenFixture("project", "linux")).screen, 120);
  const title = linux.findIndex((line) => line.startsWith(" Sandboxes"));
  assert.ok(title >= 0);
- assert.match(linux[title + 1], /Applies to all tools except exceptions/);
+ assert.match(linux[title + 1], /Applies to all tools except unsandboxed tools/);
  assert.match(linux[title + 2], /Filesystem/);
  const mac = assertFits((await screenFixture("project", "darwin", "bash")).screen, 120);
  const macTitle = mac.findIndex((line) => line.startsWith(" Sandboxes"));
@@ -246,8 +252,8 @@ test("the exceptions list opens, shows matches, and edits like a pattern list", 
 	const { screen, notifications } = fixture;
 	const lines = () => assertFits(screen, 120);
 	// Two toolsets, then the two sandboxes, then the exceptions row.
-	assert.ok(lines().includes(" Exceptions"), "the section is visible");
-	assert.ok(lines().some((line) => line.includes("Matching tools run on the host")), "the note explains the effect");
+	assert.ok(!lines().includes(" Exceptions"), "no separate Exceptions heading");
+	assert.ok(lines().some((line) => line.includes("Unsandboxed tools run on the host")), "the note explains the effect");
 	for (let step = 0; step < 4; step += 1) screen.handleInput("j");
 	assert.ok(lines().some((line) => line.startsWith("   > Unsandboxed tools")), "the row is selectable");
 	screen.handleInput("l");
@@ -271,4 +277,66 @@ test("an empty exception list says that every tool stays inside the sandbox", as
 	screen.handleInput("l");
 	const lines = assertFits(screen, 120);
 	assert.ok(lines.some((line) => line.includes("No exception")), "an empty list is explained");
+});
+
+for (const width of [0, 1, 10, 20, 40, 83, 160]) {
+ test(`Custom Paths submenu fits width ${width} and protects the root`, async () => {
+  const fixture = await screenFixture("project");
+  const { screen } = fixture;
+  for (let i = 0; i < 6; i++) screen.handleInput("j");
+  screen.handleInput("l");
+  const lines = screen.render(width);
+  for (const line of lines) assert.ok(visibleWidth(line) <= width);
+  const root = screen.render(300).find(line => line.includes("Project root"))!;
+  assert.ok(root.indexOf("Project root") < root.indexOf("/project/"));
+  assert.match(root, /Project root  \x1b\[38;5;5m\/project\//);
+  assert.doesNotMatch(root.slice(0, root.indexOf("Project root")), /\x1b\[38;5;5m/);
+  screen.handleInput("d");
+  assert.match(fixture.notifications.join("\n"), /project root cannot be removed/);
+  assert.equal(fixture.state().extra_paths.length, 1);
+  screen.handleInput("j"); screen.handleInput("d");
+  assert.equal(fixture.state().extra_paths.length, 0);
+  screen.handleInput("d");
+  assert.equal(fixture.state().extra_paths.length, 0);
+  screen.handleInput("h");
+  assert.ok(screen.render(120).some(line => line.includes("Modality")));
+ });
+}
+
+test("scope UI cycles all modes without reactivating or deleting saved paths", async () => {
+ const f = await screenFixture("project");
+ const saved = [...f.state().extra_paths];
+ for (const [scope, label] of [["everywhere", "EVERYWHERE"], ["custom", "CUSTOM PATHS"], ["project", "PROJECT ONLY"]]) {
+  f.screen.handleInput("s");
+  assert.equal(f.state().scope, scope);
+  assert.deepEqual(f.state().extra_paths, saved);
+  assert.match(f.screen.render(160).join("\n"), new RegExp(`\\[${label}\\]`));
+ }
+ const lines = f.screen.render(160).map(stripVTControlCharacters);
+ const heading = lines.indexOf(" Scope");
+ assert.equal(lines[heading + 1], "     Scope defines the paths exposed to the read and write toolsets and to the sandboxed tools.");
+ assert.ok(lines.includes("     Unsandboxed tools run on the host even while a layer is on."));
+ assert.equal(lines.filter(line => line.startsWith(" Sandboxes")).length, 1);
+ assert.ok(lines.findIndex(line => line.includes("Unsandboxed tools") && !line.includes("run on")) < heading);
+});
+
+
+test("adding a path asks before activating inactive saved extras", async () => {
+ const { tmpdir } = await import("node:os");
+ const { canonicalPath } = await import("./scope.ts");
+ const f = await screenFixture("project");
+ const saved = [...f.state().extra_paths];
+ f.inputs.push(tmpdir()); f.screen.handleInput("a");
+ await new Promise(resolve => setImmediate(resolve));
+ assert.equal(f.state().scope, "project");
+ assert.deepEqual(f.state().extra_paths, saved);
+ assert.match(f.confirmations[0], /all saved extra paths become allowed/);
+ f.setConsent(true);
+ f.inputs.push(tmpdir()); f.screen.handleInput("a");
+ await new Promise(resolve => setImmediate(resolve));
+ assert.equal(f.state().scope, "custom");
+ assert.deepEqual(f.state().extra_paths, [...saved, canonicalPath(tmpdir())]);
+ f.inputs.push(tmpdir()); f.screen.handleInput("a");
+ await new Promise(resolve => setImmediate(resolve));
+ assert.equal(f.state().extra_paths.length, 2);
 });

@@ -74,7 +74,7 @@ test("the summary is one line and fits a menu row", () => {
 });
 
 test("the menu note names the tool coverage, and it comes before the layer rows", () => {
-	assert.equal(sandboxMenuNote("all-tools", "linux")[0], "Applies to all tools except exceptions.");
+	assert.equal(sandboxMenuNote("all-tools", "linux")[0], "Applies to all tools except unsandboxed tools.");
 	assert.equal(sandboxMenuNote("bash", "linux")[0], "Applies to only bash.");
 	assert.equal(sandboxMenuNote("bash", "darwin")[0], "Applies to only bash.");
 });

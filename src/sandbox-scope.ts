@@ -83,7 +83,7 @@ export function canUseSandbox(target: SandboxTarget, platform: NodeJS.Platform =
 
 /** One line for the Sandboxes section of the screen. It names the tool coverage. */
 const MENU_NOTE: Record<SandboxTarget, string> = {
-	"all-tools": "Applies to all tools except exceptions.",
+	"all-tools": "Applies to all tools except unsandboxed tools.",
 	bash: "Applies to only bash.",
 };
 
