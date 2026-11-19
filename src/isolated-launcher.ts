@@ -244,18 +244,22 @@ export const HOME_AGENT_DIR = "/run/pi-home/.pi/agent";
  */
 export const HOME_FILES = [".gitconfig", ".profile"];
 
-/** Home directories that a sandboxed program runs programs from, read-only. */
-export const HOME_DIRECTORIES = [".local/bin"];
+/**
+ * The directories on the host PATH, which a sandboxed command must also reach.
+ * A program that the outer shell finds by name has to resolve to the same file.
+ */
+export function pathDirectories(pathValue: string | undefined): string[] {
+	return [...new Set((pathValue ?? "").split(":").filter((dir) => dir.length > 0 && isAbsolute(dir)))];
+}
 
 /** The extra home entries that exist on the host. A missing entry is skipped. */
 export function homeMounts(
 	home: string,
 	exists: (path: string) => boolean = pathExists,
 	files: readonly string[] = HOME_FILES,
-	directories: readonly string[] = HOME_DIRECTORIES,
 ): Array<{ source: string; target: string }> {
 	const found: Array<{ source: string; target: string }> = [];
-	for (const name of [...files, ...directories]) {
+	for (const name of files) {
 		const path = join(home, name);
 		if (exists(path)) found.push({ source: path, target: path });
 	}
@@ -278,6 +282,14 @@ export function agentDirectoryMounts(
 		if (exists(path)) found.push({ source: path, target: path });
 	}
 	return found;
+}
+
+/**
+ * True when a directory belongs to the sandbox itself, so a host directory must not
+ * replace it. `systemMounts` already mounts `/usr` and its links.
+ */
+export function reservedForSandbox(path: string): boolean {
+	return ["/run", "/dev", "/proc", "/sys", "/etc", "/tmp", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/var"].some((own) => containsPath(own, path));
 }
 
 /** A minimal account database. The host users and their home paths stay outside the sandbox. */
@@ -422,9 +434,16 @@ export function buildIsolatedLaunch(
 	const homeMirrored: Array<{ source: string; target: string }> = homeEntries.map((entry) => ({
 		source: entry.source, target: join(HOME_MIRROR, entry.source.slice(canonical(resolve(dependencies.env.HOME!)).length + 1)),
 	}));
-	// `~/.local/bin` holds the programs that the host shell finds. A sandboxed command
-	// that calls one must resolve the same name, so the directory joins PATH.
-	if (homeEntries.some((entry) => entry.source.endsWith("/.local/bin"))) env.PATH = `${env.PATH}:${join(HOME_MIRROR, ".local/bin")}`;
+	// Every directory on the host PATH. A program that the outer shell finds by name must
+	// resolve to the same file inside, so the directories are mounted read-only at their
+	// own paths, and the ones that exist join PATH. A path that a writable root already
+	// covers is left to that root, and a system directory is already mounted.
+	const hostDirectories = pathDirectories(dependencies.env.PATH);
+	const sandboxDirectories = restricted
+		? hostDirectories.filter((dir) => exists(dir) && !reservedForSandbox(dir) && !roots.some((root) => root !== dir && containsPath(root, dir)))
+		: [];
+	for (const dir of sandboxDirectories) addMount(dir, false);
+	if (sandboxDirectories.length > 0) env.PATH = `${env.PATH}:${sandboxDirectories.join(":")}`;
 
 	// Optional Hypa runtime. Keep both the canonical binary and the alias used by host rewrites.
 	const hypaAlias = dependencies.findExecutable("hypa", hostPath);

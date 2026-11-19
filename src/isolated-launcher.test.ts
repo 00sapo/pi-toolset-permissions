@@ -404,19 +404,49 @@ test("every agent-directory mirror has a mount point", () => {
 	assert.ok(existing.has(HOME_AGENT_DIR), "the mirrored configuration directory exists");
 });
 
-test("the git identity, the profile, and the user bin directory are mounted read-only", () => {
+test("the git identity and the profile are mounted read-only", () => {
 	const home = "/home/test";
-	const present = new Set([`${home}/.gitconfig`, `${home}/.profile`, `${home}/.local/bin`]);
+	const present = new Set([`${home}/.gitconfig`, `${home}/.profile`]);
 	const layout = { ...dependencies, exists: (path: string) => present.has(path) || hostExists(path) };
-	const { args, env } = buildIsolatedLaunch({ ...options, network: true }, { ...layout, env: { ...layout.env, HOME: home } });
+	const { args } = buildIsolatedLaunch({ ...options, network: true }, { ...layout, env: { ...layout.env, HOME: home } });
 	const found = mounts(args);
-	for (const name of [".gitconfig", ".profile", ".local/bin"]) {
+	for (const name of [".gitconfig", ".profile"]) {
 		const source = `${home}/${name}`;
 		assert.deepEqual(found.find((entry) => entry.source === source && entry.target === source), { mode: "--ro-bind", source, target: source }, name);
 		assert.deepEqual(found.find((entry) => entry.source === source && entry.target === `${HOME_MIRROR}/${name}`), { mode: "--ro-bind", source, target: `${HOME_MIRROR}/${name}` }, name);
 	}
-	// A program in the user bin directory must resolve through PATH.
-	assert.ok(env.PATH.split(":").includes(`${HOME_MIRROR}/.local/bin`), env.PATH);
+});
+
+test("every host PATH directory that exists is mounted and joins PATH", () => {
+	const nodeBin = "/home/test/.local/share/mise/installs/node/26/bin";
+	const present = new Set([nodeBin, "/home/test/bin"]);
+	const layout = {
+		...dependencies,
+		env: { ...dependencies.env, HOME: "/home/test", PATH: `${nodeBin}:/usr/bin:/home/test/bin:/missing/bin` },
+		exists: (path: string) => present.has(path) || hostExists(path),
+	};
+	const { args, env } = buildIsolatedLaunch({ ...options, network: true }, layout);
+	const found = mounts(args);
+	// One host directory was missing, and /usr/bin is already a system mount.
+	for (const dir of [nodeBin, "/home/test/bin"]) {
+		assert.deepEqual(found.find((entry) => entry.source === dir && entry.target === dir), { mode: "--ro-bind", source: dir, target: dir }, dir);
+	}
+	assert.equal(env.PATH.includes("/missing/bin"), false, "an absent directory is never named");
+	assert.equal(env.PATH.split(":").includes(nodeBin), true, env.PATH);
+	assert.equal(env.PATH.split(":").includes("/home/test/bin"), true, env.PATH);
+});
+
+test("a PATH directory inside a writable root, or one of the sandbox, is not remounted", () => {
+	const inside = "/workspace/project/vendor/bin";
+	const layout = {
+		...dependencies,
+		env: { ...dependencies.env, PATH: `${inside}:/run/pi-home/bin:/usr/bin` },
+		exists: (path: string) => path === inside || path === "/run/pi-home/bin" || hostExists(path),
+	};
+	const { args } = buildIsolatedLaunch({ ...options, network: true }, layout);
+	const sources = mounts(args).map((entry) => entry.source);
+	assert.equal(sources.includes(inside), false, "the writable project root already covers it");
+	assert.equal(sources.includes("/run/pi-home/bin"), false, "the sandbox keeps its own directory");
 });
 
 test("a missing home entry is skipped and names no host directory", () => {
