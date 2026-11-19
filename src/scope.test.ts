@@ -157,7 +157,7 @@ test("links inside extra roots retain canonical scope enforcement", () => {
 		const extra = join(space.root, "extra");
 		mkdirSync(extra);
 		symlinkSync(space.outside, join(extra, "link"), "dir");
-		const state = stateWith((current) => { current.extra_paths = [extra]; });
+		const state = stateWith((current) => { current.scope = "custom"; current.extra_paths = [extra]; });
 		assert.equal(isAllowedPath(state, space.project, join(extra, "link", "secret.txt")), false);
 	});
 });
@@ -165,6 +165,7 @@ test("links inside extra roots retain canonical scope enforcement", () => {
 test("isAllowedPath accepts a path inside an extra root", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
+			current.scope = "custom";
 			current.extra_paths = [space.outside];
 		});
 		assert.equal(isAllowedPath(state, space.project, join(space.outside, "secret.txt")), true);
@@ -201,3 +202,18 @@ test("resolveDirectory stores the canonical path of a symlink", () => {
 	}
 });
 
+
+test("scope modes expose only their selected roots without deleting extras", async () => {
+ const { scopeRoots } = await import("./scope.ts");
+ withWorkspace(space => {
+  const state = stateWith(s => { s.extra_paths = [space.outside]; });
+  for (const scope of ["project", "everywhere", "custom", "project"] as const) {
+   state.scope = scope;
+   assert.equal(isAllowedPath(state, space.project, "file.txt"), true);
+   assert.equal(isAllowedPath(state, space.project, join(space.outside, "secret.txt")), scope !== "project");
+   assert.equal(isAllowedPath(state, space.project, join(space.root, "other")), scope === "everywhere");
+   assert.deepEqual(scopeRoots(state, space.project), scope === "everywhere" ? ["/"] : scope === "custom" ? [space.project, space.outside] : [space.project]);
+   assert.deepEqual(state.extra_paths, [space.outside]);
+  }
+ });
+});

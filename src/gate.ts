@@ -1,3 +1,4 @@
+import { scopeRoots } from "./scope.ts";
 import type { BlockKind, GateDecision, PermissionsState } from "./types.ts";
 import { classify } from "./classify.ts";
 import { isAllowedPath, resolvePath, stripAt } from "./scope.ts";
@@ -38,7 +39,7 @@ function listPaths(paths: string[]): string {
 }
 
 function pathReason(state: PermissionsState, cwd: string, value: string): string {
-	const roots = listPaths([cwd, ...state.extra_paths]);
+	const roots = listPaths(scopeRoots(state, cwd));
 	return `Blocked: "${stripAt(value)}" resolves to ${resolvePath(cwd, value)}, outside the allowed roots: ${roots}. Ask the user to add the path or change the scope with the permissions tool.`;
 }
 

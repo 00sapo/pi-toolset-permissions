@@ -48,14 +48,14 @@ test("shellQuote wraps a word and escapes single quotes", () => {
 });
 
 test("restricted Linux bash mounts project and extra roots, not host root", () => {
- const state = stateWith(s => {s.sandboxes.filesystem = "read+write"; s.extra_paths = [tmpdir()];});
+ const state = stateWith(s => {s.sandboxes.filesystem = "read+write"; s.scope="custom"; s.extra_paths = [tmpdir()];});
  const command = commandOf(wrapBash("ls",state,TOOLS,process.cwd()));
  assert.ok(command.includes("'--tmpfs' '/'"));
  assert.ok(command.includes(`'--bind' '${process.cwd()}' '${process.cwd()}'`));
  assert.ok(!command.includes("'--bind' '/' '/'"));
 });
  test("macOS restricts reads and permits writes only in allowed roots", () => {
- const state = stateWith(s => {s.sandboxes.filesystem = "read+write"; s.extra_paths = [tmpdir()];});
+ const state = stateWith(s => {s.sandboxes.filesystem = "read+write"; s.scope="custom"; s.extra_paths = [tmpdir()];});
  const profile = seatbeltProfile(state,process.cwd());
  assert.ok(profile.includes("(deny file-read*)"));
  assert.ok(profile.includes("(deny file-write*)"));
@@ -171,7 +171,7 @@ test("detectSandboxTools names the platform and a shell", () => {
 });
 
 test("invalid scope fails closed and off does not canonicalize roots", () => {
- const state = stateWith(s=>{s.sandboxes.filesystem="read";s.extra_paths=["/"];});
+ const state = stateWith(s=>{s.sandboxes.filesystem="read";s.scope="custom";s.extra_paths=["/"];});
  const plan = wrapBash("ls",state,TOOLS,process.cwd());
  assert.ok(plan && "error" in plan);
  state.sandboxes.filesystem="off";state.sandboxes.no_network=true;
@@ -206,4 +206,18 @@ test("live Linux bash permits project writes but blocks outside access", async (
   assert.equal(readFileSync(join(project,"new"),"utf8"),"project\n");
   assert.equal(readFileSync(join(outside,"new"),"utf8"),"host\n");
  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test("Linux and macOS filesystem roots honor project-only and custom modes", () => {
+ const extra = mkdtempSync(join(tmpdir(), "pi-scope-extra-"));
+ try {
+  for (const scope of ["project", "custom", "project"] as const) {
+   const state = stateWith(s => { s.scope = scope; s.extra_paths = [extra]; s.sandboxes.filesystem = "read+write"; });
+   const command = commandOf(wrapBash("ls", state, TOOLS, process.cwd()));
+   const profile = seatbeltProfile(state, process.cwd());
+   assert.equal(command.includes(`'--bind' '${extra}' '${extra}'`), scope === "custom");
+   assert.equal(profile.includes(`(allow file-read* (subpath "${extra}"))`), scope === "custom");
+   assert.equal(profile.includes(`(allow file-write* (subpath "${extra}"))`), scope === "custom");
+  }
+ } finally { rmSync(extra, { recursive: true, force: true }); }
 });

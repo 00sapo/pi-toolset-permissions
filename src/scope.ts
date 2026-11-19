@@ -61,7 +61,7 @@ export function isAllowedPath(state: PermissionsState, cwd: string, value: strin
 	if (isInsideLexical(cwd, resolvePath(cwd, value))) return true;
 	const target = canonicalPath(resolvePath(cwd, value));
 	if (isInside(cwd, target)) return true;
-	return state.extra_paths.some((entry) => isInside(entry, target));
+	return state.scope === "custom" && state.extra_paths.some((entry) => isInside(entry, target));
 }
 
 /** Resolve a user-supplied path and check that it is an existing directory. */
@@ -79,3 +79,8 @@ export function resolveDirectory(cwd: string, value: string): { path: string } |
 	return { path: canonicalPath(resolved) };
 }
 
+
+/** Roots selected by the scope mode. Everywhere has no path boundary. */
+export function scopeRoots(state: PermissionsState, cwd: string): string[] {
+	return state.scope === "everywhere" ? ["/"] : state.scope === "custom" ? [cwd, ...state.extra_paths] : [cwd];
+}

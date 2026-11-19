@@ -1,3 +1,4 @@
+import { scopeRoots } from "./scope.ts";
 import type { ExtensionAPI, ExtensionContext, Tool } from "@earendil-works/pi-coding-agent";
 import { createCodingTools, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
@@ -87,7 +88,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	 */
 	function allowedRoots(ctx: ExtensionContext): string[] {
 		const found: string[] = [];
-		for (const path of [ctx.cwd, ...store.get().extra_paths]) {
+		for (const path of scopeRoots(store.get(), ctx.cwd)) {
 			try {
 				found.push(realpathSync(path));
 			} catch {

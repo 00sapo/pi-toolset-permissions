@@ -15,7 +15,16 @@ const hooks = registerHooks({
 	resolve(specifier, context, nextResolve) {
 		let source: string | undefined;
 		if (specifier === "typebox") {
-			source = "const make = () => ({}); export const Type = new Proxy({}, { get: () => make });";
+			source = `export const Type = {
+ Object: properties => ({type: "object", properties}),
+ Union: (anyOf, fields) => ({anyOf, ...fields}),
+ Literal: value => ({const: value}),
+ Optional: schema => schema,
+ Boolean: fields => ({type: "boolean", ...fields}),
+ String: fields => ({type: "string", ...fields}),
+ Array: (items, fields) => ({type: "array", items, ...fields}),
+ Record: () => ({type: "object"}), Unknown: () => ({})
+};`;
 		} else if (specifier === "@earendil-works/pi-coding-agent") {
 			source = "export const noop = undefined;";
 		}
@@ -48,13 +57,14 @@ interface Harness {
 	store: StateStore;
 	run: (params: Record<string, unknown>) => Promise<Outcome>;
 	questions: string[];
+	parameters: any;
 }
 
 function harness(space: Workspace, answer: string | undefined): Harness {
 	const store = new StateStore(join(space.root, "permissions.json"));
-	let tool: { execute: Function } | undefined;
+	let tool: { execute: Function; parameters: any } | undefined;
 	registerPermissionsTool(
-		{ registerTool: (definition: unknown) => { tool = definition as { execute: Function }; } } as never,
+		{ registerTool: (definition: unknown) => { tool = definition as { execute: Function; parameters: any }; } } as never,
 		store,
 		() => {},
 		new Approvals(),
@@ -85,6 +95,7 @@ function harness(space: Workspace, answer: string | undefined): Harness {
 			return { text: result.content.map((part) => part.text).join("\n"), isError: result.isError };
 		},
 		questions,
+		parameters: tool.parameters,
 	};
 }
 
@@ -199,4 +210,41 @@ test("an ordinary file call outside the allowed roots stays blocked", (t) => {
 	if (decision.block) assert.equal(decision.kind, "scope");
 	// Another tool cannot borrow the permission-management exemption.
 	assert.equal(evaluateCall(harnessed.store.get(), "write", { action: "add_path", path: space.outside }, space.project).block, true);
+});
+
+test("set_scope applies all modes and preserves saved paths", async t => {
+ const space = workspace(); t.after(space.cleanup);
+ const h = harness(space, "Allow once");
+ await h.run({ action: "add_path", path: space.outside });
+ assert.equal(h.store.get().scope, "custom");
+ for (const scope of ["project", "everywhere", "custom", "project"] as const) {
+  const result = await h.run({ action: "set_scope", scope });
+  assert.equal(result.isError, undefined);
+  assert.equal(h.store.get().scope, scope);
+  assert.deepEqual(h.store.get().extra_paths, [space.outside]);
+  assert.equal(evaluateCall(h.store.get(), "read", { path: space.outside }, space.project).block, scope === "project");
+ }
+ const result = await h.run({ action: "set_scope", scope: "invalid" });
+ assert.equal(result.isError, true);
+ assert.equal(h.store.get().scope, "project");
+});
+
+test("scope refusal and project root operations do not widen access", async t => {
+ const space = workspace(); t.after(space.cleanup);
+ const h = harness(space, "Block");
+ await h.run({ action: "set_scope", scope: "custom" });
+ assert.equal(h.store.get().scope, "project");
+ const allowed = harness(space, "Allow once");
+ await allowed.run({ action: "add_path", path: space.project });
+ assert.deepEqual(allowed.store.get().extra_paths, []);
+ assert.equal(allowed.questions.length, 0);
+ assert.equal((await allowed.run({ action: "remove_path", path: space.project })).isError, true);
+ assert.equal(evaluateCall(allowed.store.get(), "read", { path: space.project }, space.project).block, false);
+});
+
+
+test("set_scope schema exposes all three modes", t => {
+ const space = workspace(); t.after(space.cleanup);
+ const h = harness(space, "Block");
+ assert.deepEqual(h.parameters.properties.scope.anyOf.map((entry: any) => entry.const), ["project", "everywhere", "custom"]);
 });

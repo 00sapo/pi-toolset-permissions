@@ -34,8 +34,8 @@ const parameters = Type.Object({
 	input: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Exact target arguments for request_tool." })),
 	reason: Type.Optional(Type.String({ description: "What the call does and why it is needed." })),
 	scope: Type.Optional(
-		Type.Union([Type.Literal("project"), Type.Literal("everywhere")], {
-			description: "Path scope for set_scope. everywhere removes the path check.",
+		Type.Union([Type.Literal("project"), Type.Literal("everywhere"), Type.Literal("custom")], {
+			description: "project: project root only. custom: project root plus saved extra paths. everywhere: no path limit.",
 		}),
 	),
 	path: Type.Optional(Type.String({ description: "Directory for add_path and remove_path." })),
@@ -97,14 +97,14 @@ function applyChange(
 
 async function setScope(env: ToolEnv): Promise<ToolOutcome> {
 	const scope = env.params.scope;
-	if (scope === undefined) return { text: "set_scope needs scope: project or everywhere.", isError: true };
+	if (scope !== "project" && scope !== "everywhere" && scope !== "custom") return { text: "set_scope needs scope: project, everywhere, or custom.", isError: true };
 	const before = env.store.get().scope;
 	if (before === scope) return { text: `The scope is already ${scope}. Nothing to change.` };
-	const title = scope === "everywhere" ? "Allow every path?" : "Limit tools to the project?";
+	const title = scope === "everywhere" ? "Allow every path?" : scope === "custom" ? "Allow the project and saved extra paths?" : "Limit tools to the project root?";
 	const message =
 		scope === "everywhere"
 			? `scope: ${before} → everywhere\n\nThe path check is removed. Tools can reach any path on this machine.`
-			: `scope: ${before} → project\n\nTools may touch only the project directory and the extra paths.`;
+			: `scope: ${before} → ${scope}\n\n${scope === "custom" ? "Tools can use the project root and all saved extra paths." : "Tools can use only the project root. Saved extra paths stay inactive."}`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(env, (current) => ({ ...current, scope }), `The scope is now ${scope}.`);
 }
@@ -115,7 +115,7 @@ async function addPath(env: ToolEnv): Promise<ToolOutcome> {
 	const state = env.store.get();
 	if (state.scope === "everywhere") {
 		return {
-			text: "The scope is everywhere, so extra paths are not used. Ask the user to set the scope to project first.",
+			text: "The scope is everywhere, so extra paths are not used. Ask the user to set the scope to project or custom first.",
 			isError: true,
 		};
 	}
@@ -125,15 +125,16 @@ async function addPath(env: ToolEnv): Promise<ToolOutcome> {
 	const checked = resolveDirectory(env.ctx.cwd, value);
 	if ("error" in checked) return { text: checked.error, isError: true };
 	const target = checked.path;
+	if (canonicalPath(env.ctx.cwd) === target) return { text: "The project root is always included." };
 	if (state.extra_paths.some((entry) => canonicalPath(entry) === target)) {
 		return { text: `${target} is already an allowed path.` };
 	}
 	const title = "Allow this directory?";
-	const message = `${target}\n\nPaths inside it become allowed in project scope.`;
+	const message = `${target}\n\nThis change selects custom scope. The project root and all saved extra paths become allowed.`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(
 		env,
-		(current) => ({ ...current, extra_paths: [...current.extra_paths, target] }),
+		(current) => ({ ...current, scope: "custom", extra_paths: [...current.extra_paths, target] }),
 		`Added ${target} to the allowed paths.`,
 	);
 }
@@ -146,7 +147,7 @@ async function removePath(env: ToolEnv): Promise<ToolOutcome> {
 	const entry = entries.find((candidate) => canonicalPath(candidate) === wanted);
 	if (entry === undefined) return { text: `${wanted} is not one of the extra paths.`, isError: true };
 	const title = "Remove this allowed directory?";
-	const message = `${entry}\n\nTools can no longer use it in project scope.`;
+	const message = `${entry}\n\nCustom scope no longer exposes this extra directory.`;
 	if (!(await env.ctx.ui.confirm(title, message))) return declined();
 	return applyChange(
 		env,
@@ -245,7 +246,7 @@ async function setSandbox(env: ToolEnv): Promise<ToolOutcome> {
 			return { text: "Filesystem needs mode: off, read, or read+write. Do not use enabled.", isError: true };
 		}
 		if (env.store.get().scope === "everywhere" && mode !== "off") {
-			return { text: "Filesystem requires project scope. Set scope to project first.", isError: true };
+			return { text: "Filesystem requires project or custom scope. Set scope to project or custom first.", isError: true };
 		}
 		value = mode;
 	} else {

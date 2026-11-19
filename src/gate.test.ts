@@ -141,6 +141,7 @@ test("a path outside the project scope is blocked", () => {
 test("an extra path is allowed", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
+			current.scope = "custom";
 			current.extra_paths = [space.outside];
 		});
 		const value = join(space.outside, "secret.txt");
@@ -176,6 +177,7 @@ test("bash ignores the file path scope in everywhere too", () => {
 test("reasons start with Blocked and stay short", () => {
 	withWorkspace((space) => {
 		const state = stateWith((current) => {
+			current.scope = "custom";
 			current.extra_paths = [space.outside];
 		});
 		const longPath = join(space.root, "elsewhere", "y".repeat(300));
