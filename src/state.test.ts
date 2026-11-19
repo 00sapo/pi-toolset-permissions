@@ -270,6 +270,7 @@ test("saveState and loadState round trip", () => {
 			enabled: false,
 			builtin: false,
 		});
+		state.unsandboxed_tools = ["^my_host_tool$"];
 
 		saveState(state, file);
 		assert.deepEqual(loadState(file), state);

@@ -17,14 +17,16 @@ import { allowsAsk, nextToolsetMode, toolsetMode } from "./types.ts";
 type Row =
 	| { kind: "toolset"; toolset: Toolset }
 	| { kind: "sandbox"; info: SandboxInfo }
+	| { kind: "exceptions" }
 	| { kind: "scope" }
 	| { kind: "path"; path: string; root: boolean };
 
-type View = { kind: "main" } | { kind: "patterns"; name: string };
+type View = { kind: "main" } | { kind: "patterns"; name: string } | { kind: "exceptions" };
 
 const SECTION: Record<Row["kind"], string> = {
 	toolset: "Toolsets",
 	sandbox: "Sandboxes",
+	exceptions: "Exceptions",
 	scope: "Scope",
 	path: "Paths",
 };
@@ -104,6 +106,7 @@ export async function openPermissions(
 			if (sandboxesEnabled) {
 				for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
 			}
+			rows.push({ kind: "exceptions" });
 			rows.push({ kind: "scope" });
 			[ctx.cwd, ...state.extra_paths].forEach((path, position) => {
 				rows.push({ kind: "path", path, root: position === 0 });
@@ -128,6 +131,11 @@ export async function openPermissions(
 					const mode = item.info.key === "filesystem"
 						? filesystemMode(state.sandboxes.filesystem) : onOff(state.sandboxes.no_network);
 					return `   ${marker} ${name}${mode}${shown}`;
+				}
+				case "exceptions": {
+					const count = state.unsandboxed_tools.length;
+					const note = theme.fg("dim", ` ${count} pattern${count === 1 ? "" : "s"}`);
+					return `   ${marker} ${"Unsandboxed tools".padEnd(labelWidth)}${note}`;
 				}
 				case "scope":
 					return `   ${marker} ${"All paths".padEnd(labelWidth)}[${state.scope.toUpperCase()}]`;
@@ -158,6 +166,9 @@ export async function openPermissions(
 				const next = rows[position + 1];
 				if (item.kind === "sandbox" && (next === undefined || next.kind !== "sandbox")) {
 					if (state.scope === "everywhere") lines.push(theme.fg("dim", "     Filesystem is disabled. Select project scope to use it."));
+				}
+				if (item.kind === "exceptions") {
+					lines.push(theme.fg("dim", " Matching tools run on the host even while a layer is on."));
 				}
 			});
 			lines.push(
@@ -210,7 +221,32 @@ export async function openPermissions(
 		};
 
 		const renderScreen = (state: PermissionsState, width: number): string[] =>
-			view.kind === "patterns" ? renderPatterns(state, width) : renderMain(state, width);
+			view.kind === "patterns" ? renderPatterns(state, width)
+				: view.kind === "exceptions" ? renderExceptions(state, width)
+					: renderMain(state, width);
+
+		/** The exception list. Same keys and layout as a toolset pattern list. */
+		const renderExceptions = (state: PermissionsState, width: number): string[] => {
+			const patterns = state.unsandboxed_tools;
+			const inner = Math.max(20, width - 7);
+			const patternWidth = Math.max(12, Math.min(60, Math.floor(inner * 0.55)));
+			const matchWidth = Math.max(8, inner - patternWidth - 2);
+			const lines = [
+				` ${theme.bold("Permissions")} ${theme.fg("dim", "›")} ${theme.bold("Unsandboxed tools")}`,
+				theme.fg("dim", ` ${patterns.length} of ${MAX_TOOLSET_PATTERNS} patterns · a matching tool runs on the host`),
+				"",
+			];
+			if (patterns.length === 0) lines.push(theme.fg("dim", "   No exception. Every tool stays inside the sandbox."));
+			patterns.forEach((pattern, position) => {
+				const marker = position === patternIndex ? theme.fg("accent", ">") : " ";
+				const shown = clip(pattern, patternWidth).padEnd(patternWidth);
+				const names = matchingNames(pattern, toolNames);
+				const matches = theme.fg("dim", clip(names.length === 0 ? NO_MATCH : names.join(", "), matchWidth));
+				lines.push(`   ${marker} ${shown}  ${matches}`);
+			});
+			lines.push("", theme.fg("dim", " j/k move · l/enter edit · h/esc back · a add · d delete"));
+			return lines;
+		};
 
 		const cycleScope = (): void => {
 			update((current) => ({ ...current, scope: current.scope === "project" ? "everywhere" : "project" }));
@@ -365,6 +401,67 @@ export async function openPermissions(
 			refresh();
 		};
 
+		/** Saves the exception list. Unlike a toolset, this list may be empty. */
+		const saveExceptions = (next: string[]): boolean => {
+			const checked = checkPatterns(next, true);
+			if ("error" in checked) {
+				notify(checked.error, "error");
+				return false;
+			}
+			const patterns = checked.patterns;
+			try {
+				store.update((current) => ({ ...current, unsandboxed_tools: patterns }));
+			} catch (error) {
+				notify(`The change was not saved: ${messageOf(error)}`, "error");
+				return false;
+			}
+			return true;
+		};
+
+		const addException = async (): Promise<void> => {
+			const before = store.get().unsandboxed_tools;
+			if (before.length >= MAX_TOOLSET_PATTERNS) {
+				notify(`The list already holds ${MAX_TOOLSET_PATTERNS} patterns. Delete one first.`, "warning");
+				refresh();
+				return;
+			}
+			const value = await ctx.ui.input("Add an exception pattern", "^my_tool$");
+			if (value === undefined) return;
+			const result = appendPattern(store.get().unsandboxed_tools, value, true);
+			if ("error" in result) {
+				notify(result.error, "error");
+				refresh();
+				return;
+			}
+			if (saveExceptions(result.patterns)) patternIndex = result.patterns.length - 1;
+			refresh();
+		};
+
+		const editException = async (position: number): Promise<void> => {
+			const old = store.get().unsandboxed_tools[position];
+			if (old === undefined) return;
+			const value = await ctx.ui.editor("Edit an exception pattern", old);
+			if (value === undefined) return;
+			const result = replacePattern(store.get().unsandboxed_tools, position, value);
+			if ("error" in result) {
+				notify(result.error, "error");
+				refresh();
+				return;
+			}
+			saveExceptions(result.patterns);
+			refresh();
+		};
+
+		const deleteException = (position: number): void => {
+			const patterns = store.get().unsandboxed_tools;
+			if (position < 0 || position >= patterns.length) return;
+			// The exception list may be empty, so the last pattern can go too.
+			if (saveExceptions(patterns.filter((_entry, index) => index !== position))) {
+				patternIndex = Math.max(0, Math.min(position, patterns.length - 2));
+			}
+			refresh();
+		};
+
 		const toggleSelected = (): void => {
 			const item = buildRows(store.get())[index];
 			if (item === undefined) return;
@@ -377,6 +474,12 @@ export async function openPermissions(
 		const openSelected = (): void => {
 			const item = buildRows(store.get())[index];
 			if (item === undefined) return;
+			if (item.kind === "exceptions") {
+				view = { kind: "exceptions" };
+				patternIndex = 0;
+				refresh();
+				return;
+			}
 			if (item.kind !== "toolset") {
 				toggleSelected();
 				return;
@@ -387,9 +490,9 @@ export async function openPermissions(
 		};
 
 		const movePattern = (step: number): void => {
-			const toolset = view.kind === "patterns" ? toolsetByName(view.name) : undefined;
-			if (toolset === undefined || toolset.patterns.length === 0) return;
-			const count = toolset.patterns.length;
+			const count = view.kind === "exceptions" ? store.get().unsandboxed_tools.length
+				: view.kind === "patterns" ? (toolsetByName(view.name)?.patterns.length ?? 0) : 0;
+			if (count === 0) return;
 			patternIndex = (patternIndex + step + count) % count;
 			refresh();
 		};
@@ -431,6 +534,36 @@ export async function openPermissions(
 			}
 			if (data === "l" || keybindings.matches(data, "tui.select.confirm")) {
 				void editPattern(toolset.name, patternIndex);
+			}
+		};
+
+		const handleExceptionsInput = (data: string): void => {
+			if (view.kind !== "exceptions") return;
+			const patterns = store.get().unsandboxed_tools;
+			if (data === "h" || keybindings.matches(data, "tui.select.cancel")) {
+				view = { kind: "main" };
+				refresh();
+				return;
+			}
+			if (data === "k" || keybindings.matches(data, "tui.select.up")) {
+				movePattern(-1);
+				return;
+			}
+			if (data === "j" || keybindings.matches(data, "tui.select.down")) {
+				movePattern(1);
+				return;
+			}
+			patternIndex = Math.min(patternIndex, Math.max(0, patterns.length - 1));
+			if (data === "a") {
+				void addException();
+				return;
+			}
+			if (data === "d") {
+				deleteException(patternIndex);
+				return;
+			}
+			if (data === "l" || keybindings.matches(data, "tui.select.confirm")) {
+				void editException(patternIndex);
 			}
 		};
 
@@ -484,6 +617,7 @@ export async function openPermissions(
 
 		const handleInput = (data: string): void => {
 			if (view.kind === "patterns") handlePatternsInput(data);
+			else if (view.kind === "exceptions") handleExceptionsInput(data);
 			else handleMainInput(data);
 		};
 

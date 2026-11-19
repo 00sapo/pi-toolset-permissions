@@ -53,6 +53,8 @@ export interface PermissionsState {
 	extra_paths: string[];
 	toolsets: Toolset[];
 	sandboxes: SandboxFlags;
+	/** Regular expressions that match tool names which run outside the sandbox. */
+	unsandboxed_tools: string[];
 }
 
 /** A path patch the gate asks pi to apply before the tool runs. */

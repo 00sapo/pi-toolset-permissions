@@ -48,6 +48,7 @@ export function statusText(
 	const policy = platformPolicy(platform);
 	lines.push(`sandbox coverage: ${policy.coverage}`);
 	if (policy.reason !== undefined) lines.push(`sandbox status: ${policy.reason}`);
+	lines.push(`unsandboxed tools: ${state.unsandboxed_tools.length === 0 ? "none" : state.unsandboxed_tools.join(", ")}`);
 	lines.push(`scope: ${state.scope}`);
 	lines.push(
 		`paths: ${state.extra_paths.length === 0 ? "the project root only" : state.extra_paths.join(", ")}`,

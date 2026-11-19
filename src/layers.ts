@@ -58,3 +58,25 @@ export function decideCall(
 		reason: "A sandbox layer is on, so the call may run only through the isolated executor.",
 	};
 }
+
+/**
+ * True when a tool name matches one of the exception patterns, so the tool runs on the
+ * host even while a sandbox layer is on. A pattern that does not compile matches nothing.
+ */
+export function isExempt(pattern: string, toolName: string): boolean {
+	try {
+		return new RegExp(pattern, "i").test(toolName);
+	} catch {
+		return false;
+	}
+}
+
+/** The names of the tools that the exception patterns match. */
+export function exemptTools(patterns: readonly string[], toolNames: readonly string[]): string[] {
+	return toolNames.filter((name) => patterns.some((pattern) => isExempt(pattern, name)));
+}
+
+/** The stamp for the exception list in a configuration key. Order does not matter. */
+export function exemptionKey(patterns: readonly string[]): string {
+	return JSON.stringify([...new Set(patterns)].sort());
+}

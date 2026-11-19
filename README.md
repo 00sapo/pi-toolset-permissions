@@ -25,20 +25,27 @@ Try it for one session without saving it:
 pi -e npm:pi-toolset-permissions
 ```
 
+To load a local copy, use `pi install /path/to/pi-toolset-permissions`, or start the file itself with `pi -e /path/to/pi-toolset-permissions/src/index.ts`.
+
 Then open the screen with `/permissions`.
 
-On Linux, this extension delegates tool execution to a sandboxed Pi process, so every tool runs inside the boundary. On macOS it wraps `bash` only. On Windows no backend exists, and the screen says to start Pi inside WSL2. [Isolated executor](docs/ISOLATED.md) describes the boundary.
+An installed copy reloads with `/reload`. A session that starts with `pi -e` reads the file at startup, so start pi again after an edit.
+
+On Linux, this extension delegates tool execution to a sandboxed Pi process, so every tool runs inside the boundary. It needs `bubblewrap` and unprivileged user namespaces. On macOS it wraps `bash` only, through the built-in `sandbox-exec`. On Windows no backend exists, and the screen says to start Pi inside WSL2. [Isolated executor](docs/ISOLATED.md) describes the boundary.
 
 ## Main features
 
 - Four toolsets that ship with the extension: read, write, execute, and permissions.
 - Editable patterns. Press enter on a toolset to see its regular expressions and the tools that they match.
 - Custom toolsets that match tool names with regular expressions.
-- Two sandboxes: a filesystem layer with off, read, and read+write states, and a no-network layer.
+- The most powerful sandbox out there, capable of intercepting *any* tool, even third-party tools.
+- Two sandbox layers: a filesystem layer with off, read, and read+write states, and a no-network layer.
+- An exception list for tools that must run on the host while a layer is on.
 - One path scope for the file tools.
 - One `permissions` tool for the model. Each change asks you to agree.
 - One question for each tool that no toolset matches.
 - One state file for all sessions.
+- Support for the Herdr view of agent state.
 
 ## Concept
 
@@ -58,24 +65,6 @@ The `permissions` toolset has only the on and off states. It does not accept ask
 Bash is one tool. Its patterns sit in the execute toolset. The sandbox is a second layer. It starts the whole call inside the boundary, and it does not read the command text.
 
 The model changes the state with the `permissions` tool. The tool asks you to agree before each change. Without a dialog, the tool cannot change the state.
-
-## Install
-
-Install the package from a local path:
-
-```sh
-pi install /path/to/pi-toolset-permissions
-```
-
-Or load the extension for one session:
-
-```sh
-pi -e /path/to/pi-toolset-permissions/src/index.ts
-```
-
-An installed copy reloads with `/reload`. A session that starts with `pi -e` reads the file at startup, so start pi again after an edit.
-
-The read-only sandbox needs `bubblewrap` on Linux. macOS uses the built-in `sandbox-exec`. Native Windows has no backend. Start pi inside WSL2 to use the Linux backend.
 
 ## Use
 
@@ -101,6 +90,9 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
      Filesystem              [OFF]
      No network              [OFF]
 
+ Exceptions
+   > Unsandboxed tools         0 patterns
+
  Scope
    > All paths               [PROJECT]
 
@@ -114,7 +106,7 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
 | --- | --- |
 | up/k, down/j | move the selection |
 | space | cycle a toolset through off → on → ask → off, toggle a sandbox, or switch the scope |
-| enter/l | open the patterns of the selected toolset. On a sandbox or the scope, enter does what space does |
+| enter/l | open the patterns of the selected toolset, or the exception list. On a sandbox or the scope, enter does what space does |
 | s | switch the scope between project and everywhere |
 | a | add a directory to the paths |
 | d | remove the selected extra path |
@@ -134,6 +126,7 @@ The default state:
 | Extra paths | none |
 | Filesystem sandbox | off |
 | No-network sandbox | off |
+| Unsandboxed tools | none |
 
 The write toolset is off at the start. Turn it on before the model can change files with the write and edit tools.
 
@@ -280,9 +273,17 @@ A sandbox does not change a toolset, and a toolset does not change a sandbox. Se
 
 Commands that you type with `!` are not sandboxed. A sandbox covers only the tools that the model calls.
 
+### The exception list
+
+Some tools cannot run inside the sandbox. An extension that reads a host socket is one example. The Exceptions row holds one regular expression for each such tool, and a matching tool keeps the host implementation while a layer is on.
+
+Press enter on the row to open the list. It uses the same keys as a toolset pattern list: `a` adds, `enter` edits, `d` deletes, and `esc` goes back. A row shows the pattern and the tool names that it matches. A pattern that does not compile matches nothing, and the list may be empty.
+
+The list is the one place where a tool leaves the boundary. The model can set it with `set_unsandboxed_tools`, and that change asks you first and names every pattern.
+
 ## The permissions tool
 
-The model uses one tool with nine actions.
+The model uses one tool with ten actions.
 
 | Action | Parameters | Effect |
 | --- | --- | --- |
@@ -295,6 +296,7 @@ The model uses one tool with nine actions.
 | remove_toolset | name | delete a custom toolset |
 | set_toolset | name, mode | set a toolset to off, on, or ask |
 | set_sandbox | sandbox, mode or enabled | set the filesystem state, or turn the no-network layer on or off |
+| set_unsandboxed_tools | patterns | replace the exception list |
 
 The `status` action only reads. State changes and `request_tool` require your approval.
 
@@ -352,6 +354,12 @@ The old toolset name `permission` loads as `permissions` without changes to its 
 If both names exist, the `permissions` entry takes precedence.
 
 A file from version 1 still loads. The extension drops the old flags, keeps the custom toolsets, and writes the default patterns for the shipped toolsets.
+
+## Waiting questions
+
+While a dialog waits for your answer, the extension reports the block to Herdr. The pane shows the agent as blocked, and Herdr notifies you. The dialog is the approval question, the unknown-tool question, or a change that the model requested. Browsing `/permissions` reports nothing, because you started that screen.
+
+Without Herdr the report changes nothing. A host that ignores the event never holds a dialog back.
 
 ## Limits
 
