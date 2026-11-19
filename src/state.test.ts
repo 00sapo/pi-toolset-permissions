@@ -32,7 +32,7 @@ function withTempDir(run: (dir: string) => void): void {
 
 test("defaults match the sketch", () => {
 	const state = defaultState();
-	assert.equal(state.version, 2);
+	assert.equal(state.version, 3);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, []);
 	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
@@ -65,7 +65,7 @@ test("mergeState repairs garbage", () => {
 		sandboxes: { readonly_bash: "true", no_network: 1 },
 		toolsets: "nope",
 	});
-	assert.equal(state.version, 2);
+	assert.equal(state.version, 3);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, ["/abs/one"]);
 	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
@@ -215,7 +215,7 @@ test("mergeState caps the toolset list", () => {
 test("mergeState accepts junk input", () => {
 	for (const raw of [null, undefined, 42, "junk", [], { flags: [] }, { extra_paths: {} }]) {
 		const state = mergeState(raw);
-		assert.equal(state.version, 2);
+		assert.equal(state.version, 3);
 		assert.equal(state.scope, "project");
 		assert.equal(state.toolsets.length, 4);
 	}
@@ -411,7 +411,7 @@ test("update rebases on the file so two stores keep both changes", () => {
 	});
 });
 
-test("version 2 persists all three modes for builtin and custom toolsets", () => {
+test("version 3 persists all three modes for builtin and custom toolsets", () => {
 	withTempDir((dir) => {
 		const file = join(dir, "permissions.json");
 		const state = defaultState();
@@ -423,7 +423,7 @@ test("version 2 persists all three modes for builtin and custom toolsets", () =>
 		assert.deepEqual(loadState(file), state);
 		const store = new StateStore(file);
 		assert.equal(store.update((current) => current).toolsets[0].enabled, "ask");
-		assert.equal(loadState(file).version, 2);
+		assert.equal(loadState(file).version, 3);
 	});
 });
 
@@ -464,4 +464,46 @@ test("store updates and loads reset filesystem for everywhere scope", () => {
   assert.equal(store.reload().sandboxes.filesystem, "off");
   assert.equal(new StateStore(file).get().sandboxes.filesystem, "off");
  });
+});
+
+for (const version of [undefined, 1, 2]) {
+ test(`legacy project state version ${version} migrates extras to custom`, () => {
+  const migrated = mergeState({ version, scope: "project", extra_paths: ["/saved"], sandboxes: { filesystem: "read+write" } });
+  assert.equal(migrated.version, 3);
+  assert.equal(migrated.scope, "custom");
+  assert.equal(migrated.sandboxes.filesystem, "read+write");
+  assert.deepEqual(mergeState(migrated), migrated);
+  assert.equal(mergeState({ version, scope: "project", extra_paths: [] }).scope, "project");
+ });
+}
+
+test("version 3 project mode preserves inactive extras across updates and reloads", () => {
+ withTempDir((dir) => {
+  const file = join(dir, "permissions.json");
+  const store = new StateStore(file);
+  store.update(s => ({ ...s, scope: "custom", extra_paths: ["/saved"] }));
+  for (const scope of ["project", "everywhere", "custom", "project"] as const) {
+   store.update(s => ({ ...s, scope }));
+   assert.equal(new StateStore(file).get().scope, scope);
+   assert.deepEqual(store.reload().extra_paths, ["/saved"]);
+  }
+ });
+});
+
+for (const scope of ["project", "custom", "everywhere"] as const) {
+ test(`${scope} normalizes filesystem with saved extras`, () => {
+  const state = mergeState({ version: 3, scope, extra_paths: ["/saved"], sandboxes: { filesystem: "read" } });
+  assert.equal(state.scope, scope);
+  assert.equal(state.sandboxes.filesystem, scope === "everywhere" ? "off" : "read");
+ });
+}
+
+test("legacy default scope with extras preserves access", () => {
+ assert.equal(mergeState({ extra_paths: ["/saved"] }).scope, "custom");
+ assert.deepEqual(mergeState({ version: 3, scope: "project", extra_paths: ["/saved"] }).extra_paths, ["/saved"]);
+});
+
+test("empty and populated unsandboxed patterns survive normalization", () => {
+ assert.deepEqual(checkPatterns([], true), { patterns: [] });
+ assert.deepEqual(mergeState({ unsandboxed_tools: ["^host_tool$"] }).unsandboxed_tools, ["^host_tool$"]);
 });

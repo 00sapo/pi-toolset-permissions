@@ -1,6 +1,6 @@
 /** Shared types for the permissions extension. No runtime imports here. */
 
-export type ScopeMode = "project" | "everywhere";
+export type ScopeMode = "project" | "everywhere" | "custom";
 
 export type ToolsetMode = "off" | "on" | "ask";
 
@@ -47,9 +47,9 @@ export interface SandboxFlags {
 }
 
 export interface PermissionsState {
-	version: 2;
+	version: 3;
 	scope: ScopeMode;
-	/** Absolute directories allowed in project scope. */
+	/** Saved absolute directories, active only in custom scope. */
 	extra_paths: string[];
 	toolsets: Toolset[];
 	sandboxes: SandboxFlags;
@@ -76,4 +76,8 @@ export interface Classification {
 	mode: "on" | "ask";
 	/** Names of matching toolsets that require approval. */
 	askToolsets: string[];
+}
+
+export function scopeLabel(scope: ScopeMode): string {
+	return scope === "project" ? "PROJECT ONLY" : scope === "custom" ? "CUSTOM PATHS" : "EVERYWHERE";
 }

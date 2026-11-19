@@ -4,7 +4,7 @@ import { statusLine, statusText } from "./status.ts";
 import type { FilesystemMode, PermissionsState } from "./types.ts";
 
 const base = (filesystem: FilesystemMode, no_network = false): PermissionsState => ({
-	version: 2, scope: "project", extra_paths: [], toolsets: [],
+	version: 3, scope: "project", extra_paths: [], toolsets: [],
 	sandboxes: { filesystem, no_network },
 	unsandboxed_tools: [],
 });
@@ -49,9 +49,22 @@ test("filesystem modes appear in reports and active counts ignore off", () => {
 });
 
 test("the report names the unsandboxed tools", () => {
-	const state = base(false);
+	const state = base("off");
 	assert.match(statusText(state, "all-tools", "linux"), /unsandboxed tools: none/);
 	state.unsandboxed_tools = ["^my_tool$", "^other_"];
 	const report = statusText(state, "all-tools", "linux");
 	assert.match(report, /unsandboxed tools: \^my_tool\$, \^other_/);
+});
+
+test("status distinguishes active roots from saved extras for every scope", () => {
+ const state = base("off"); state.extra_paths = ["/saved"];
+ for (const scope of ["project", "custom", "everywhere"] as const) {
+  state.scope = scope;
+  const report = statusText(state);
+  assert.match(report, /saved extra paths: 1/);
+  assert.ok(report.includes(`scope: ${scope}`));
+  const paths = report.split("\n").find(line => line.startsWith("paths:"))!;
+  assert.equal(paths.includes("/saved"), scope === "custom");
+  assert.ok(statusLine(state).includes(scope === "project" ? "PROJECT ONLY" : scope === "custom" ? "CUSTOM PATHS" : "EVERYWHERE"));
+ }
 });

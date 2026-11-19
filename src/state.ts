@@ -63,7 +63,7 @@ function builtinToolsets(): Toolset[] {
 
 export function defaultState(): PermissionsState {
 	return {
-		version: 2,
+		version: 3,
 		scope: "project",
 		extra_paths: [],
 		sandboxes: { filesystem: "off", no_network: false },
@@ -90,7 +90,7 @@ function compiles(pattern: string): boolean {
  * the first error. Both the state file and the pattern editor use this function, so a
  * saved list always loads again.
  */
-export function checkPatterns(raw: unknown[]): { patterns: string[] } | { error: string } {
+export function checkPatterns(raw: unknown[], allowEmpty = false): { patterns: string[] } | { error: string } {
 	const patterns: string[] = [];
 	for (const value of raw) {
 		if (typeof value !== "string") return { error: "A pattern must be text." };
@@ -103,12 +103,12 @@ export function checkPatterns(raw: unknown[]): { patterns: string[] } | { error:
 		patterns.push(source);
 		if (patterns.length >= MAX_TOOLSET_PATTERNS) break;
 	}
-	if (patterns.length === 0) return { error: "A toolset needs at least one pattern." };
+	if (patterns.length === 0 && !allowEmpty) return { error: "A toolset needs at least one pattern." };
 	return { patterns };
 }
 
 function readScope(value: unknown): ScopeMode | null {
-	return value === "project" || value === "everywhere" ? value : null;
+	return value === "project" || value === "everywhere" || value === "custom" ? value : null;
 }
 
 function readExtraPaths(value: unknown): string[] {
@@ -190,10 +190,13 @@ export function mergeState(raw: unknown): PermissionsState {
 		toolsets.push(toolset);
 	}
 
+	const extras = readExtraPaths(source.extra_paths);
+	const scope = readScope(source.scope) ?? defaults.scope;
 	const state: PermissionsState = {
-		version: 2,
-		scope: readScope(source.scope) ?? defaults.scope,
-		extra_paths: readExtraPaths(source.extra_paths),
+		version: 3,
+		scope: (source.version === undefined || (typeof source.version === "number" && source.version <= 2))
+			&& scope === "project" && extras.length > 0 ? "custom" : scope,
+		extra_paths: extras,
 		sandboxes: { ...defaults.sandboxes },
 		toolsets,
 		unsandboxed_tools: readUnsandboxedTools(source.unsandboxed_tools),
@@ -201,7 +204,7 @@ export function mergeState(raw: unknown): PermissionsState {
 
 	const sandboxes = isRecord(source.sandboxes) ? source.sandboxes : {};
 	if (typeof sandboxes.no_network === "boolean") state.sandboxes.no_network = sandboxes.no_network;
-	if (state.scope === "project") {
+	if (state.scope !== "everywhere") {
 		if (sandboxes.filesystem === "off" || sandboxes.filesystem === "read" || sandboxes.filesystem === "read+write") {
 			state.sandboxes.filesystem = sandboxes.filesystem;
 		} else if (!("filesystem" in sandboxes) && sandboxes.readonly_bash === true) {
