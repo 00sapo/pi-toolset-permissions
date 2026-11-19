@@ -44,7 +44,7 @@ On Linux, this extension automatically forwards third-party tool execution to a 
 - One path scope for the file tools.
 - One `permissions` tool for the model. Each change asks you to agree.
 - One question for each tool that no toolset matches.
-- One state file for all sessions.
+- One state file for each root session, inherited by its children.
 - Support for the Herdr view of agent state.
 
 ## Concept
@@ -339,13 +339,13 @@ Without a dialog, the call is blocked.
 
 ## State file
 
-The state lives in one file: `~/.pi/agent/permissions.json`.
+Each root session reads and writes one file: `~/.pi/agent/permissions/sessions/<hash>.json`. The hash comes from the session ID. A new session starts from the defaults. A resumed session reads its own file again, so your choices are still there. A child session reads the file of its root, so it inherits the parent policy. The older shared file `~/.pi/agent/permissions.json` is no longer updated.
 
 The file is plain JSON with two-space indentation and a final newline. A toolset stores `enabled` as `false`, `true`, or `"ask"`. It holds the toolsets, their patterns, the scope, the paths, and the sandboxes. It also holds your changes to the shipped toolsets, so it is the only file that you need to keep.
 
 The extension never writes the current time or another value that changes by itself. You can track the file in git and read a diff before you commit it.
 
-- `PI_PERMISSIONS_FILE` sets another path for the file.
+- `PI_PERMISSIONS_FILE` sets one fixed path for every session. Use it for tests and for a single shared policy.
 - `PI_CODING_AGENT_DIR` moves the agent directory.
 
 The extension writes a temporary file and renames it. A crash cannot leave half a file.

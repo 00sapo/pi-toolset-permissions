@@ -100,7 +100,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 - Keep the `permissions` toolset in the state file. The screen shows it next to the other toolsets, so the user sees the whole picture.
 - Treat bash as one tool. The execute toolset sets the outer limit, and the sandbox sets the inner limit. Command text analysis is fragile, so the extension does not use it.
 - Put the sandbox in the kernel. Linux uses bubblewrap or unshare, macOS uses Seatbelt, and native Windows fails closed.
-- Keep one state file for all sessions. Permission state is not conversation state.
+- Keep one state file for each root session. A new session starts from the defaults, a resumed session reads its own file, and a child reads the file of its root. `PI_PERMISSIONS_FILE` pins one file for tests.
 - Treat the `permissions` toolset as binary. It is on or off. Ask would ask the user twice for one change, once in the gate and once in the tool dialog.
 - Treat a link inside the project as a project path. The project contains the link, so the gate accepts a path through it before link resolution. A direct path to the link target still needs an allowed root. Extra roots keep canonical containment, because the user names those directories explicitly.
 - Fail closed. A missing backend or a broken gate blocks the call.
