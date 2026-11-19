@@ -168,7 +168,11 @@ The suite does not import `index.ts` or `ui.ts`, because those files need the pi
 
 The path scope covers the usual path arguments of the file tools. The extension does not inspect other arguments.
 
-The sandbox covers the shell tools. It does not cover pi, the file tools, other extensions, or commands that the user types with `!`.
+On Linux, the sandbox covers delegated tool execution, including third-party tools. Extension initialization, hooks, and commands remain on the host.
+
+On macOS, the sandbox covers bash only. Commands that the user types with `!` remain on the host.
+
+The Pi 1.5.2 registry adapter and its limits are described in [Isolated executor](ISOLATED.md#api-integration).
 
 The operating system is the real boundary.
 

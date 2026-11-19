@@ -31,14 +31,14 @@ Then open the screen with `/permissions`.
 
 An installed copy reloads with `/reload`. A session that starts with `pi -e` reads the file at startup, so start pi again after an edit.
 
-On Linux, this extension delegates tool execution to a sandboxed Pi process, so every tool runs inside the boundary. It needs `bubblewrap` and unprivileged user namespaces. On macOS it wraps `bash` only, through the built-in `sandbox-exec`. On Windows no backend exists, and the screen says to start Pi inside WSL2. [Isolated executor](docs/ISOLATED.md) describes the boundary.
+On Linux, this extension automatically forwards third-party tool execution to a sandboxed Pi process when a layer is on. Extension initialization and hooks still run on the host. Explicit unsandboxed patterns keep host execution. It needs `bubblewrap` and unprivileged user namespaces. On macOS it wraps `bash` only, through the built-in `sandbox-exec`. On Windows no backend exists, and the screen says to start Pi inside WSL2. [Isolated executor](docs/ISOLATED.md) describes the boundary.
 
 ## Main features
 
 - Four toolsets that ship with the extension: read, write, execute, and permissions.
 - Editable patterns. Press enter on a toolset to see its regular expressions and the tools that they match.
 - Custom toolsets that match tool names with regular expressions.
-- The most powerful sandbox out there, capable of intercepting *any* tool, even third-party tools.
+- Automatic forwarding for third-party tools on Linux, with unavailable tools blocked instead of a host fallback.
 - Two sandbox layers: a filesystem layer with off, read, and read+write states, and a no-network layer.
 - An exception list for tools that must run on the host while a layer is on.
 - One path scope for the file tools.
