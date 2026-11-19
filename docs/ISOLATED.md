@@ -100,6 +100,10 @@ Paths outside these mounts stay outside the view. That includes the rest of your
 
 The sandbox has its own IPC and host-name namespaces. The host name inside is always `sandbox`. The `PATH` uses `/run/pi-bin`. The `HOME` is `/run/pi-home`.
 
+The runtime files of this extension are mounted read-only at their host paths. When such a path sits inside a writable allowed root, the writable mount wins, so a file under the project stays editable in `read+write` mode. The same file stays read-only in `read` mode.
+
+A program that the outer configuration writes into a command must exist inside the sandbox. The launcher mounts the `hypa` binary read-only at its host path and links it into `/run/pi-bin`, so a rewritten command and a bare `hypa` both resolve. No home directory or credential store is mounted for it.
+
 The restricted states do not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host. A write outside the allowed roots can therefore report success and still leave the host file unchanged.
 
 With `filesystem off`, `/run` stays private because the bridge socket and the agent directory live there. The rest of the host tree is mounted writable.
@@ -120,7 +124,13 @@ Inner-only direct declarations become outer delegates through `registerTool`. Th
 
 ## Limits
 
-The no-network layer removes IP access. A relay inside the sandbox connects the inner model endpoint to one host Unix socket. A Unix socket is a local process communication endpoint. The authenticated host server accepts only scripted model requests and does not forward network traffic.
+The no-network layer removes IP access.
+
+Two relays connect the sandbox to one host Unix socket each. The tool bridge carries scripted model requests for the executor. The model relay serves one fixed model, `sandbox-parent/parent`, from the outer session, so a subagent keeps the outer credentials: no API key enters the sandbox. The same relay answers permission questions from a child session, and the outer gate decides them.
+
+Both relays are local process communication endpoints. The host server accepts only the scripted tool request, a model request from the private provider, and a permission question. It does not forward arbitrary network traffic.
+
+The outer approval gate covers the sandboxed sessions. On Linux `src/index.ts` builds one gate and hands it to the executor, so every tool call needs the same approval that a host call needs, and a child session asks through the same dialog.
 
 The empty root does not remove every path from the host. Your working directory is mounted, so a tool can read every file under it. The selected `/etc` entries are mounted, so a file in one of them is readable.
 
