@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { FilesystemMode } from "./types.ts";
-import { extensionRoot } from "./forwarding.ts";
+import { extensionRoot, isBuiltinExtensionSource } from "./forwarding.ts";
 import { fileURLToPath } from "node:url";
 
 export interface IsolatedLaunchOptions {
@@ -334,6 +334,7 @@ export function buildIsolatedLaunch(
 	const inventory = canonical(fileURLToPath(new URL("./inner-inventory.ts", import.meta.url)));
 	const workdir = canonical(resolve(options.cwd));
 	const extensions = options.extensions.map((path) => {
+		if (isBuiltinExtensionSource(path)) return path;
 		if (!path || path.includes("\0") || path.startsWith("builtin:")) {
 			throw new Error("Extensions must be explicit filesystem paths.");
 		}
@@ -353,7 +354,7 @@ export function buildIsolatedLaunch(
 	const roots = restricted ? canonicalRoots(options.paths, canonical) : [];
  if (restricted && !roots.some(root => containsPath(root, workdir))) throw new Error("cwd must belong to an allowed root.");
  for (const root of roots) addMount(root, options.filesystem === "read+write");
-	for (const path of extensions) addMount(extensionRoot(path, exists), false);
+	for (const path of extensions.filter(path => !isBuiltinExtensionSource(path))) addMount(extensionRoot(path, exists), false);
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
 	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory]) addMount(path, false);

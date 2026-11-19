@@ -411,3 +411,16 @@ test("a real worktree git directory is still mounted", () => {
 	assert.ok(sources.includes("/repo/.git/worktrees/project"), "the worktree git directory is mounted");
 	assert.ok(sources.includes("/repo/.git"), "the shared object directory is mounted");
 });
+
+
+test("only known builtin extensions pass through without filesystem mounts", () => {
+	const { args } = buildIsolatedLaunch({...options, extensions:["builtin:codemode", "builtin:tool-search"]}, dependencies);
+	for (const path of ["builtin:codemode", "builtin:tool-search"]) {
+		assert.ok(args.includes(path));
+		assert.equal(args[args.indexOf(path) - 1], "--extension");
+		assert.ok(mounts(args).every(mount => !mount.source.startsWith("builtin:")));
+	}
+	for (const path of ["builtin:other", "builtin:codemode/../mcp", "builtin:codemode\0", "builtin:tool_search"]) {
+		assert.throws(() => buildIsolatedLaunch({...options, extensions:[path]}, dependencies), /explicit filesystem paths/);
+	}
+});
