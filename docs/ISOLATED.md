@@ -91,10 +91,12 @@ The sandbox starts with an empty root. Only these paths become visible:
 | The git directory of a worktree | follows the read-only layer | Git needs it, and git writes its index there. |
 | `rules`, `agents`, `extensions`, `skills`, `prompts`, `themes`, and `npm` from the Pi agent directory | read-only | Rules, agent definitions, and the packages that an extension imports. |
 | `settings.json`, `keybindings.json`, `mcp.json`, `subagents.json`, `model-alias.json`, `APPEND_SYSTEM.md`, `SYSTEM.md`, `AGENTS.md`, `AGENTS.override.md` from the Pi agent directory | read-only | Configuration that a sandboxed tool or extension reads. |
+| `~/.gitconfig` and `~/.profile` | read-only | The git identity for a commit, and the shell setup. |
+| `~/.local/bin` | read-only | The programs that the host shell finds. It joins `PATH`. |
 | `/tmp`, `/run`, `/dev`, `/proc`, and the home directory | private and empty | Temporary files, the control socket, devices, processes, and `HOME`. |
 | `/proc/sys/kernel/random` | empty | The host boot identifier stays outside. Random data still comes from `/dev/urandom`. |
 
-The agent directory appears twice: at its host path and at `/run/pi-home/.pi/agent`, so an extension that reads `homedir()` finds it too. The relay links both into the private agent directory that the inner Pi uses, so `getAgentDir()` returns the mounted entries.
+The agent directory appears twice: at its host path and at `/run/pi-home/.pi/agent`, so an extension that reads `homedir()` finds it too. The git identity, the profile, and the user bin directory appear the same way, at their host path and below `/run/pi-home`. The relay links both into the private agent directory that the inner Pi uses, so `getAgentDir()` returns the mounted entries.
 
 Paths outside these mounts stay outside the view. That includes the rest of your home directory, `~/.ssh`, other projects, `/root`, mounted disks, host Unix sockets, and the host name. The agent directory is mounted entry by entry, so `auth.json`, `models-store.json`, `trust.json`, `sessions`, and `state` stay outside.
 

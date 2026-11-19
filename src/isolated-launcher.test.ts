@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { hostname } from "node:os";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HOST_NAME, HOME_AGENT_DIR, accountFiles, buildIsolatedLaunch, parentDirectories, systemMounts } from "./isolated-launcher.ts";
+import { HOST_NAME, HOME_AGENT_DIR, HOME_MIRROR, accountFiles, buildIsolatedLaunch, homeMounts, parentDirectories, systemMounts } from "./isolated-launcher.ts";
 
 const options = {
 	socketPath: "/tmp/private bridge/model.sock", token: "test-token", cwd: "/workspace/project",
@@ -402,6 +402,41 @@ test("every agent-directory mirror has a mount point", () => {
 		}
 	}
 	assert.ok(existing.has(HOME_AGENT_DIR), "the mirrored configuration directory exists");
+});
+
+test("the git identity, the profile, and the user bin directory are mounted read-only", () => {
+	const home = "/home/test";
+	const present = new Set([`${home}/.gitconfig`, `${home}/.profile`, `${home}/.local/bin`]);
+	const layout = { ...dependencies, exists: (path: string) => present.has(path) || hostExists(path) };
+	const { args, env } = buildIsolatedLaunch({ ...options, network: true }, { ...layout, env: { ...layout.env, HOME: home } });
+	const found = mounts(args);
+	for (const name of [".gitconfig", ".profile", ".local/bin"]) {
+		const source = `${home}/${name}`;
+		assert.deepEqual(found.find((entry) => entry.source === source && entry.target === source), { mode: "--ro-bind", source, target: source }, name);
+		assert.deepEqual(found.find((entry) => entry.source === source && entry.target === `${HOME_MIRROR}/${name}`), { mode: "--ro-bind", source, target: `${HOME_MIRROR}/${name}` }, name);
+	}
+	// A program in the user bin directory must resolve through PATH.
+	assert.ok(env.PATH.split(":").includes(`${HOME_MIRROR}/.local/bin`), env.PATH);
+});
+
+test("a missing home entry is skipped and names no host directory", () => {
+	const home = "/home/test";
+	const layout = { ...dependencies, env: { ...dependencies.env, HOME: home }, exists: (path: string) => path === `${home}/.gitconfig` || hostExists(path) };
+	const { args, env } = buildIsolatedLaunch({ ...options, network: true }, layout);
+	const sources = mounts(args).map((entry) => entry.source);
+	assert.ok(sources.includes(`${home}/.gitconfig`));
+	for (const missing of [".profile", ".local/bin"]) assert.equal(sources.some((source) => source === `${home}/${missing}`), false, missing);
+	// The other home entries stay outside: no key, no credential, no runtime state.
+	for (const secret of [".ssh", ".gnupg", ".pi", ".config", ".netrc", ".npmrc"]) {
+		assert.equal(sources.some((source) => source === `${home}/${secret}`), false, secret);
+	}
+	assert.equal(env.PATH.includes(`${HOME_MIRROR}/.local/bin`), false, "PATH names no absent directory");
+});
+
+test("the home helper reports only the entries that exist", () => {
+	assert.deepEqual(homeMounts("/home/x", (path) => path === "/home/x/.profile"),
+		[{ source: "/home/x/.profile", target: "/home/x/.profile" }]);
+	assert.deepEqual(homeMounts("/home/x", () => false), []);
 });
 
 test("a real worktree git directory is still mounted", () => {

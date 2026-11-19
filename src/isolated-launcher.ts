@@ -237,6 +237,34 @@ export const AGENT_DIR_DIRECTORIES = ["rules", "agents", "extensions", "skills",
 /** Where the agent directory appears inside the sandbox, so a program that uses `homedir()` finds it. */
 export const HOME_AGENT_DIR = "/run/pi-home/.pi/agent";
 
+/**
+ * Files directly under the host home directory that a sandboxed program reads.
+ * `~/.gitconfig` gives git the identity that it needs for a commit, and `~/.profile`
+ * carries the shell setup. Both are read-only. Credentials live elsewhere.
+ */
+export const HOME_FILES = [".gitconfig", ".profile"];
+
+/** Home directories that a sandboxed program runs programs from, read-only. */
+export const HOME_DIRECTORIES = [".local/bin"];
+
+/** The extra home entries that exist on the host. A missing entry is skipped. */
+export function homeMounts(
+	home: string,
+	exists: (path: string) => boolean = pathExists,
+	files: readonly string[] = HOME_FILES,
+	directories: readonly string[] = HOME_DIRECTORIES,
+): Array<{ source: string; target: string }> {
+	const found: Array<{ source: string; target: string }> = [];
+	for (const name of [...files, ...directories]) {
+		const path = join(home, name);
+		if (exists(path)) found.push({ source: path, target: path });
+	}
+	return found;
+}
+
+/** Where the extra home entries appear inside the sandbox, below the private home. */
+export const HOME_MIRROR = "/run/pi-home";
+
 /** The agent-directory entries that exist on the host. A missing entry is skipped. */
 export function agentDirectoryMounts(
 	agentDir: string,
@@ -387,6 +415,17 @@ export function buildIsolatedLaunch(
 		env.PI_BRIDGE_HOST_AGENT_DIR = agentDir;
 		env.PI_BRIDGE_AGENT_ENTRIES = agentEntries.map((entry) => entry.source.slice(agentDir.length + 1)).join(",");
 	}
+	// The host home directory contributes a few named entries, never the tree. Each is
+	// read-only and appears at its host path and below the private home.
+	const homeEntries = restricted && dependencies.env.HOME ? homeMounts(canonical(resolve(dependencies.env.HOME)), exists) : [];
+	for (const entry of homeEntries) addMount(entry.source, false);
+	const homeMirrored: Array<{ source: string; target: string }> = homeEntries.map((entry) => ({
+		source: entry.source, target: join(HOME_MIRROR, entry.source.slice(canonical(resolve(dependencies.env.HOME!)).length + 1)),
+	}));
+	// `~/.local/bin` holds the programs that the host shell finds. A sandboxed command
+	// that calls one must resolve the same name, so the directory joins PATH.
+	if (homeEntries.some((entry) => entry.source.endsWith("/.local/bin"))) env.PATH = `${env.PATH}:${join(HOME_MIRROR, ".local/bin")}`;
+
 	// Optional Hypa runtime. Keep both the canonical binary and the alias used by host rewrites.
 	const hypaAlias = dependencies.findExecutable("hypa", hostPath);
 	if (hypaAlias) {
@@ -437,7 +476,7 @@ export function buildIsolatedLaunch(
 
 	// A mount point must exist inside the sandbox before a bind targets it.
 	const created = new Set([...reserved, "/tmp/home"]);
-	const targets = [...(restricted ? mounts.keys() : []), ...mirrored.map((entry) => entry.target)].sort();
+	const targets = [...(restricted ? mounts.keys() : []), ...mirrored.map((entry) => entry.target), ...homeMirrored.map((entry) => entry.target)].sort();
 	for (const path of targets) {
 		for (const dir of parentDirectories(path)) {
 			if (created.has(dir)) continue;
@@ -449,6 +488,7 @@ export function buildIsolatedLaunch(
 		args.push(mounts.get(path)!.writable ? "--bind" : "--ro-bind", path, path);
 	}
 	for (const entry of mirrored) args.push("--ro-bind", entry.source, entry.target);
+	for (const entry of homeMirrored) args.push("--ro-bind", entry.source, entry.target);
 
 	args.push(
 		"--dir", "/run/pi-bridge",
