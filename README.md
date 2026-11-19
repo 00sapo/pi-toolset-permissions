@@ -47,6 +47,9 @@ Then open the screen with `/permissions`.
 - **macOS**: it wraps `bash` only, through the built-in `sandbox-exec`.
 - **Windows**: no backend exists, and the screen says to start Pi inside WSL2.
 
+Sandboxes automatically mount all the paths listed in your PATH env variable, your home's `.gitconfig`
+and your `.profile`. Other paths can be added through the UI or asking to the LLM.
+
 ## Concept
 
 A toolset is a group of tool names. Each toolset has one state: off, on, or ask.
