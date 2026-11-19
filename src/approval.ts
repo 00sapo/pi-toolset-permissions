@@ -6,6 +6,7 @@ import { askParent, type ForwardReply } from "./sessions.ts";
 
 interface ApprovalUI {
 	hasUI: boolean;
+	signal?: AbortSignal;
 	cwd: string;
 	/** "tui", "rpc", "json", or "print". */
 	mode?: string;
@@ -13,7 +14,7 @@ interface ApprovalUI {
 	sessionManager?: { getSessionId(): string };
 	ui: {
 		custom?: ExtensionContext["ui"]["custom"];
-		select(title: string, choices: string[]): Promise<string | undefined>;
+		select(title: string, choices: string[], options?: { signal?: AbortSignal }): Promise<string | undefined>;
 		input(title: string, placeholder?: string): Promise<string | undefined>;
 	};
 }
@@ -42,6 +43,7 @@ export class Approvals {
 	}
 
 	async request(store: StateStore, tool: string, input: Record<string, unknown>, reason: string, ctx: ApprovalUI): Promise<string> {
+		if (ctx.signal?.aborted) return "Blocked: the permission request was cancelled.";
 		if (!reason.trim()) return "Blocked: provide a reason for this call.";
 		if (tool === "permissions" && input.action === "request_tool") return "Blocked: approval requests cannot request themselves.";
 		const decision = evaluateCall(store.get(), tool, input, ctx.cwd);
@@ -62,6 +64,7 @@ export class Approvals {
 			return this.settle(store, tool, input, names, forwarded.reply, ctx.cwd);
 		}
 		const reply = await this.dialog(tool, input, reason, names, ctx);
+		if (ctx.signal?.aborted) return "Blocked: the permission request was cancelled.";
 		return this.settle(store, tool, input, names, reply, ctx.cwd);
 	}
 
@@ -129,7 +132,7 @@ export class Approvals {
 				invalidate(): void {},
 			};
 		}) : await ctx.ui.select(
-			approvalLines(details, 78, { bold: (text) => text, fg: (_color, text) => text }).join("\n"), choices,
+			approvalLines(details, 78, { bold: (text) => text, fg: (_color, text) => text }).join("\n"), choices, { signal: ctx.signal },
 		);
 		if (answer === "Deny with explanation") {
 			const explanation = await ctx.ui.input("Why do you deny this call?", "Explain what the AI must change");
