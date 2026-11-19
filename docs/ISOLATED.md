@@ -158,3 +158,14 @@ To run the real Pi integration tests on a Linux host with bubblewrap, enable the
 ```sh
 PI_BRIDGE_LIVE_TEST=1 npm test
 ```
+
+## Builtin extension tools
+
+The executor explicitly loads `builtin:codemode` and `builtin:tool-search` when their registrations exist in the host.
+These identifiers select bundled Pi code, not filesystem mounts. Other `builtin:` values remain invalid launcher inputs.
+Inactive tools produce no unavailable warnings. Later activation uses the loaded inner definitions.
+Third-party definitions named `codemode` or `tool_search` still require matching filesystem sources.
+
+Codemode scripts and their nested tool calls execute inside the sandbox. Original definitions retain their schemas, preparation hooks, and constrained sampling metadata.
+The inner session uses its own tool selection and script store. Search changes the inner selection, not the outer selection.
+The executor does not synchronize deferred-tool activation or script stores between sessions. Non-LLM models still require credentials inside the sandbox.
