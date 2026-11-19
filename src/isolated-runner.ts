@@ -1,3 +1,4 @@
+import { handleModelRelay } from "./model-relay.ts";
 import type { FilesystemMode } from "./types.ts";
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -23,6 +24,8 @@ export interface IsolatedRunnerOptions {
 	/** The host Pi agent directory. Undefined mounts none. */
 	piAgentDir?: string;
 	timeoutMs?: number;
+	streamModel?: (context: any, signal: AbortSignal) => AsyncIterable<any>;
+	approve?: (event: any, signal: AbortSignal) => Promise<any>;
 	onUI?: (request: RpcRecord) => Promise<void | RpcRecord>;
 }
 
@@ -57,7 +60,10 @@ export class IsolatedRunner {
 				return options.onUI?.(record);
 			},
 		});
-		this.server = createServer((req, res) => { void this.bridge.handleRequest(req, res); });
+		this.server = createServer((req, res) => {
+			if (req.url === "/model" || req.url === "/permissions") void handleModelRelay(req, res, this.bridge.token, options.streamModel, options.approve);
+			else void this.bridge.handleRequest(req, res);
+		});
 	}
 
 	static async start(options: IsolatedRunnerOptions): Promise<{ runner: IsolatedRunner; tools: OpenAITool[] }> {

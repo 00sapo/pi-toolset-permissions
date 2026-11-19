@@ -128,12 +128,6 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		return true;
 	};
 
-	// Linux has a boundary that covers every tool. On that platform this entry point hands the
-	// tool set to the isolated executor, so no tool runs on the host while a layer is on.
-	if (platformPolicy().plan === "isolated") {
-		install(pi, { registerPermissionsCommand: true });
-		return;
-	}
 
 	try {
 		const store = new StateStore();
@@ -170,6 +164,15 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 
 		registerPermissionsTool(pi, store, publish, approvals);
 
+		// The store must know its session before any executor starts, because the isolated
+		// installer registers its own start handler and may launch a child immediately.
+		pi.on("session_start", (_event, ctx) => {
+			store.bindSession(sessionIdOf(ctx));
+		});
+
+		const isolated = platformPolicy().plan === "isolated";
+		if (isolated) install(pi, { registerPermissionsCommand: true, store, approvals, approve: (event, ctx) => gateCall(event, ctx) });
+		if (!isolated) {
 		// Bash is one tool. When a sandbox is on, run the command inside the OS boundary.
 		const bashDefinition = createBashTool(process.cwd());
 		pi.registerTool({
@@ -236,7 +239,9 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 			},
 		});
 
-		pi.on("tool_call", async (event, ctx) => {
+		}
+
+		async function gateCall(event: any, ctx: ExtensionContext) {
 			// Another copy of this extension already gates this session.
 			if (passive) return undefined;
 			const input = event.input as unknown as Record<string, unknown>;
@@ -290,7 +295,8 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				// Fail closed: a broken gate must not open the tools.
 				return { block: true, reason: `Blocked: the permissions gate failed (${messageOf(error)}).` };
 			}
-		});
+		}
+		pi.on("tool_call", gateCall);
 
 		pi.on("tool_result", async (event) => {
 			authorizedCalls.delete(event.toolCallId);
@@ -300,6 +306,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 			clearApprovals();
 			activeCtx = ctx;
 			const sessionId = sessionIdOf(ctx);
+			store.bindSession(sessionId);
 			try {
 				store.reload();
 			} catch {
@@ -334,13 +341,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 				publish(ctx);
 				return;
 			}
-			// Linux has an entry point that covers every tool, so this one must not imply otherwise.
-			if (policy.plan === "isolated" && ctx.hasUI) {
-				ctx.ui.notify(
-					"This entry point sandboxes bash only. For every tool, start Pi with src/isolated.ts instead.",
-					"warning",
-				);
-			}
+
 			publish(ctx);
 		});
 

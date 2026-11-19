@@ -29,12 +29,15 @@ export default function isolatedExtension(pi: ExtensionAPI): void {
 export interface IsolatedOptions {
 	/** True when this module also owns the `/permissions` command. */
 	registerPermissionsCommand: boolean;
+	store?: StateStore;
+	approvals?: Approvals;
+	approve?: (event: any, ctx: ExtensionContext) => Promise<any>;
 }
 
 /** The executor, without the entry-point decision. The default extension calls it on Linux. */
 export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	if (process.env.PI_TOOLSET_INNER === "1") throw new Error("The isolated entry point cannot load inside its own child.");
-	const store = new StateStore();
+	const store = options.store ?? new StateStore();
 	// Every file of this extension. A tool registered by index.ts or isolated.ts is our own code.
 	const ownPath = ownPaths(fileURLToPath(import.meta.url));
 	/** A question from this process or from the inner Pi reaches the host as a prompt. */
@@ -73,7 +76,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 		return wrapped;
 	});
 	pi.registerTool(anchor as any);
-	registerPermissionsTool(pi, store, () => status(undefined), new Approvals());
+	if (!options.store) registerPermissionsTool(pi, store, () => status(undefined), options.approvals ?? new Approvals());
 
 	pi.registerFlag("inner-extensions", { type: "string", description: "JSON array of extension paths to load only inside the sandbox.", default: "[]" });
 	pi.registerFlag("inner-pi", { type: "string", description: "Absolute path to the inner Pi executable." });
@@ -163,6 +166,17 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 							piPath: pi.getFlag("inner-pi") as string | undefined,
 							nodePath: pi.getFlag("inner-node") as string | undefined,
 							piAgentDir: agentDirectory(),
+							streamModel: (context, signal) => {
+								if (!currentContext?.model) throw new Error("The parent model is unavailable.");
+								return currentContext.modelRegistry.streamSimple(currentContext.model, context, { signal });
+							},
+							approve: async (event, signal) => {
+								if (!options.approve || !currentContext) return { block: true, reason: "The parent gate is unavailable." };
+								const context = Object.create(currentContext);
+								Object.defineProperty(context, "signal", { value: signal });
+								const reply = await options.approve({ ...event, toolCallId: `inner:${event.toolCallId}` }, context);
+								return signal.aborted ? { block: true, reason: "The permission request was cancelled." } : reply ?? {};
+							},
 							onUI: async (request) => {
 								if (!currentContext) throw new Error("The outer UI is unavailable.");
 								return forwardBridgeUI(request, currentContext.ui, currentSignal);
@@ -263,7 +277,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			if (signal?.aborted) throw new Error("Sandbox call cancelled.");
 			currentContext = ctx;
 			currentSignal = signal;
-			try { return await runIsolated(ctx, tool.name, params, signal, onUpdate); }
+			try { return await runIsolated(ctx, tool.name, tool.name === "subagent" ? { ...params, model: "sandbox-parent/parent" } : params, signal, onUpdate); }
 			finally { currentSignal = undefined; }
 		});
 		serial = pending;
@@ -345,6 +359,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 
 	pi.on("session_start", async (event, ctx) => {
 		currentContext = ctx;
+		store.bindSession(ctx.sessionManager?.getSessionId() ?? "");
 		if (event.reason !== "reload") registered = false;
 		register(ctx.cwd);
 		if (!wired) {

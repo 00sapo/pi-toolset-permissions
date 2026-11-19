@@ -23,6 +23,7 @@ async function main(): Promise<void> {
  await Promise.all([
   symlink(pi, "/run/pi-bin/pi").catch(() => {}),
   symlink(process.execPath, "/run/pi-bin/node").catch(() => {}),
+  ...(process.env.PI_BRIDGE_HYPA ? [symlink(process.env.PI_BRIDGE_HYPA, "/run/pi-bin/hypa").catch(() => {})] : []),
  ]);
  // A minimal account database. The host users and their home paths stay outside the sandbox.
  // With the filesystem layer off, `/etc` is the host one, so writing there would change the host.
@@ -77,9 +78,12 @@ async function main(): Promise<void> {
      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
    } },
   }), { mode: 0o600 });
+  // Child sessions inherit extensions from settings. The model relay appears there so
+  // the root and every child load exactly one copy.
   // Pi 1.5.2 settings.md: these are the persisted autoCompact and autoRetry controls.
   // --no-approve prevents project settings from replacing these values.
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({
+   extensions: process.env.PI_BRIDGE_MODEL_EXTENSION ? [process.env.PI_BRIDGE_MODEL_EXTENSION] : [],
    compaction: { enabled: false }, retry: { enabled: false, provider: { maxRetries: 0 } },
    cacheWarming: "off", defaultProjectTrust: "never",
   }), { mode: 0o600 });
@@ -88,6 +92,7 @@ async function main(): Promise<void> {
    HOSTNAME: process.env.HOSTNAME ?? "sandbox",
    LANG: process.env.LANG ?? "C.UTF-8", TERM: process.env.TERM ?? "dumb",
    PI_TOOLSET_INNER: "1", PI_BRIDGE_SOCKET: socketPath, PI_BRIDGE_TOKEN: token,
+   PI_PARENT_MODEL_URL: `http://127.0.0.1:${address.port}`,
    PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0",
   };
   const child = spawn(pi, args, { stdio: "inherit", env });
