@@ -17,6 +17,8 @@ export interface IsolatedRunnerOptions {
 	extensions: string[];
 	filesystem: FilesystemMode;
 	paths: string[];
+	/** Host directories that the sandbox mounts at the same path. */
+	mounts?: ReadonlyArray<{ path: string; writable: boolean }>;
 	/** True isolates the network namespace. False keeps the host network. The caller always passes it. */
 	network: boolean;
 	piPath?: string;
@@ -88,7 +90,7 @@ export class IsolatedRunner {
 		const plan = buildIsolatedLaunch({
 			socketPath, token: this.bridge.token,
 			cwd: this.options.cwd, extensions: this.options.extensions,
-			filesystem: this.options.filesystem, paths: this.options.paths, network: this.options.network,
+			filesystem: this.options.filesystem, paths: this.options.paths, mounts: this.options.mounts, network: this.options.network,
 			piPath: this.options.piPath, nodePath: this.options.nodePath, piAgentDir: this.options.piAgentDir,
 		});
 		const child = spawn(plan.command, plan.args, { cwd: this.options.cwd, env: plan.env, stdio: "pipe" });

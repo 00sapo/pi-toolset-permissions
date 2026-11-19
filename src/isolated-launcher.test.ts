@@ -329,6 +329,33 @@ test("live bwrap enforces scoped roots and leaves off mode host files writable",
  } finally {rmSync(dir,{recursive:true,force:true});}
 });
 
+test("custom mounts are bound at their own path, read-only unless writable", () => {
+	const data = "/srv/data";
+	const scratch = "/srv/scratch";
+	const layout = { ...dependencies, exists: (path: string) => path === data || path === scratch || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, network: true,
+		mounts: [{ path: data, writable: false }, { path: scratch, writable: true }] }, layout);
+	const found = mounts(args);
+	assert.deepEqual(found.find((entry) => entry.target === data), { mode: "--ro-bind", source: data, target: data });
+	assert.deepEqual(found.find((entry) => entry.target === scratch), { mode: "--bind", source: scratch, target: scratch });
+});
+
+test("a mount the scope already covers, or the sandbox owns, is not bound twice", () => {
+	const layout = { ...dependencies, exists: (path: string) => path === "/workspace/project/vendor" || path === "/run/data" || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, network: true,
+		mounts: [{ path: "/workspace/project/vendor", writable: true }, { path: "/run/data", writable: false }] }, layout);
+	const targets = mounts(args).map((entry) => entry.target);
+	assert.equal(targets.includes("/workspace/project/vendor"), false, "the project root already covers it");
+	assert.equal(targets.includes("/run/data"), false, "the sandbox owns /run");
+});
+
+test("the filesystem layer off ignores custom mounts", () => {
+	const layout = { ...dependencies, exists: (path: string) => path === "/srv/data" || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, filesystem: "off", network: true,
+		mounts: [{ path: "/srv/data", writable: true }] }, layout);
+	assert.equal(mounts(args).some((entry) => entry.source === "/srv/data"), false, "the host tree is already visible");
+});
+
 test("a crafted .git pointer cannot mount an arbitrary host directory", () => {
 	const files: Record<string, string> = {
 		"/workspace/project/.git": "gitdir: /home/alice/.ssh\n",

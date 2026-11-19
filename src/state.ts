@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 import { childLink } from "./sessions.ts";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { PermissionsState, ScopeMode, Toolset } from "./types.ts";
+import type { PermissionsState, SandboxMount, ScopeMode, Toolset } from "./types.ts";
 import { allowsAsk } from "./types.ts";
 
 export const MAX_EXTRA_PATHS = 100;
 export const MAX_TOOLSETS = 50;
 export const MAX_TOOLSET_PATTERNS = 32;
+export const MAX_MOUNTS = 16;
 const MAX_PATTERN_LENGTH = 500;
 
 /** The toolsets that the extension ships. `write` starts off. */
@@ -74,12 +75,13 @@ function builtinToolsets(): Toolset[] {
 
 export function defaultState(): PermissionsState {
 	return {
-		version: 3,
+		version: 4,
 		scope: "project",
 		extra_paths: [],
 		sandboxes: { filesystem: "off", no_network: false },
 		toolsets: builtinToolsets(),
 		unsandboxed_tools: [],
+		sandbox_mounts: [],
 	};
 }
 
@@ -134,6 +136,45 @@ function readExtraPaths(value: unknown): string[] {
 		if (result.length >= MAX_EXTRA_PATHS) break;
 	}
 	return result;
+}
+
+/**
+ * Directories that the sandbox cannot mount: they belong to the sandbox itself, so a
+ * host path there would replace the private one. The launcher refuses them too.
+ */
+const PROTECTED_MOUNT_ROOTS = ["/run", "/proc", "/dev", "/sys", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64"];
+
+/** True when the sandbox mounts this path itself, so a custom mount must not replace it. */
+export function isProtectedMountPath(path: string): boolean {
+	return PROTECTED_MOUNT_ROOTS.some((own) => path === own || path.startsWith(`${own}/`));
+}
+
+/**
+ * Reads the custom mounts. A missing or malformed entry is dropped, and so is a path that
+ * does not exist as a directory or that overlaps the sandbox itself. A stale entry must
+ * never stop the extension from loading or open a path that the launcher cannot mount.
+ */
+function readMounts(value: unknown): SandboxMount[] {
+	if (!Array.isArray(value)) return [];
+	const found: SandboxMount[] = [];
+	const seen = new Set<string>();
+	for (const entry of value) {
+		if (!isRecord(entry)) continue;
+		const raw = entry.path;
+		if (typeof raw !== "string" || !isAbsolute(raw)) continue;
+		let path = raw;
+		try {
+			if (!statSync(raw).isDirectory()) continue;
+			path = realpathSync(raw);
+		} catch {
+			continue;
+		}
+		if (isProtectedMountPath(path) || seen.has(path)) continue;
+		seen.add(path);
+		found.push({ path, writable: entry.writable === true });
+		if (found.length >= MAX_MOUNTS) break;
+	}
+	return found;
 }
 
 /** Reads the sandbox exception list. An empty list is valid and means no exception. */
@@ -204,13 +245,14 @@ export function mergeState(raw: unknown): PermissionsState {
 	const extras = readExtraPaths(source.extra_paths);
 	const scope = readScope(source.scope) ?? defaults.scope;
 	const state: PermissionsState = {
-		version: 3,
+		version: 4,
 		scope: (source.version === undefined || (typeof source.version === "number" && source.version <= 2))
 			&& scope === "project" && extras.length > 0 ? "custom" : scope,
 		extra_paths: extras,
 		sandboxes: { ...defaults.sandboxes },
 		toolsets,
 		unsandboxed_tools: readUnsandboxedTools(source.unsandboxed_tools),
+		sandbox_mounts: readMounts(source.sandbox_mounts),
 	};
 
 	const sandboxes = isRecord(source.sandboxes) ? source.sandboxes : {};
@@ -281,6 +323,11 @@ export class StateStore {
 		this.#state = loadState(this.#file);
 	}
 
+	/** The file that new sessions start from, and that `save_defaults` writes. */
+	get defaultsFile(): string {
+		return statePath();
+	}
+
 	/** Each root session owns a persistent file. Children share the parent policy. */
 	bindSession(sessionId: string): void {
 		if (this.#explicit || !sessionId) return;
@@ -292,21 +339,30 @@ export class StateStore {
 		}
 		const key = createHash("sha256").update(root).digest("hex");
 		this.#file = join(dirname(statePath()), "permissions", "sessions", `${key}.json`);
-		// A new session starts from the defaults. The first session after this change
-		// also adopts the older shared file once, so an existing setup is not lost.
+		// A new session starts from the template, so a choice that the user saved for
+		// every session also seeds the next one. Without a template it starts from the
+		// shipped defaults.
 		if (!existsSync(this.#file)) {
-			const marker = join(dirname(statePath()), "permissions", "sessions", ".seeded");
-			const legacy = existsSync(statePath()) && !existsSync(marker) ? loadState(statePath()) : defaultState();
-			this.#state = legacy;
+			const seed = existsSync(this.defaultsFile) ? loadState(this.defaultsFile) : defaultState();
+			this.#state = seed;
 			try {
-				saveState(legacy, this.#file);
-				writeFileSync(marker, "", { mode: 0o600 });
+				saveState(seed, this.#file);
 			} catch {
 				// An unwritable directory keeps the seed in memory only.
 			}
 			return;
 		}
 		this.#state = loadState(this.#file);
+	}
+
+	/**
+	 * Copies the current session state into the template file. The session keeps its own
+	 * file, so this changes what a new session starts from and nothing else.
+	 */
+	saveDefaults(): void {
+		// The session may have changed on disk since the last read.
+		const current = this.#explicit ? this.#state : loadState(this.#file);
+		saveState(current, this.defaultsFile);
 	}
 
 	get(): PermissionsState {

@@ -4,9 +4,10 @@ import { statusLine, statusText } from "./status.ts";
 import type { FilesystemMode, PermissionsState } from "./types.ts";
 
 const base = (filesystem: FilesystemMode, no_network = false): PermissionsState => ({
-	version: 3, scope: "project", extra_paths: [], toolsets: [],
+	version: 4, scope: "project", extra_paths: [], toolsets: [],
 	sandboxes: { filesystem, no_network },
 	unsandboxed_tools: [],
+	sandbox_mounts: [],
 });
 
 test("on Linux the footer names full coverage when a layer is on", () => {
@@ -67,4 +68,11 @@ test("status distinguishes active roots from saved extras for every scope", () =
   assert.equal(paths.includes("/saved"), scope === "custom");
   assert.ok(statusLine(state).includes(scope === "project" ? "PROJECT ONLY" : scope === "custom" ? "CUSTOM PATHS" : "EVERYWHERE"));
  }
+});
+
+test("the report lists the custom mounts with their mode", () => {
+	const state = { ...base("read"), sandbox_mounts: [{ path: "/srv/data", writable: false }, { path: "/srv/out", writable: true }] };
+	const report = statusText(state);
+	assert.match(report, /custom mounts: \/srv\/data \(read-only\), \/srv\/out \(read-write\)/);
+	assert.match(statusText(base("read")), /custom mounts: none/);
 });

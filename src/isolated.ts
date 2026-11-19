@@ -130,7 +130,9 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	}
 
 	function configurationKey(ctx: ExtensionContext, layers: SandboxLayers): string {
-		return JSON.stringify([layerKey(layers, layers.filesystem === "off" ? [] : allowedRoots(ctx)), sources(ctx)]);
+		// A mount change starts a new process, so it belongs to the key.
+		const mounts = layers.filesystem === "off" ? [] : store.get().sandbox_mounts.map((entry) => `${entry.path}:${entry.writable}`);
+		return JSON.stringify([layerKey(layers, layers.filesystem === "off" ? [] : allowedRoots(ctx)), sources(ctx), [...mounts].sort()]);
 	}
 
 	/** The running executor for these layers. It starts one if the combination needs it. */
@@ -162,6 +164,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 							extensions: paths,
 							filesystem: layers.filesystem,
 							paths: allowedRoots(ctx),
+							mounts: store.get().sandbox_mounts,
 							network: layers.no_network,
 							piPath: pi.getFlag("inner-pi") as string | undefined,
 							nodePath: pi.getFlag("inner-node") as string | undefined,

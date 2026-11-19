@@ -1,7 +1,7 @@
 # pi-toolset-permissions
 
 <p align="center">
-  <img src="docs/preview.png" alt="The /permissions screen: five toolsets with their pattern counts, the Filesystem and Network sandboxes, the scope modality, the custom paths, and the unsandboxed tools" width="760">
+  <img src="docs/preview.png" alt="The /permissions screen: five toolsets with their pattern counts and off, on, or ask state, the Filesystem and Network sandboxes, the unsandboxed tools, custom mounts, the scope modality, the custom paths, and the defaults row" width="760">
 </p>
 
 _Do you find managing sandboxes and permissions complicated?_
@@ -24,6 +24,7 @@ The AI can request state changes when the `permissions` toolset is on. Turn that
 - In ask-mode, approval shows the exact input, and covers that one call.
 - Per-session state, inherited by subagents.
 - Allows global path exceptions but allows simlinks to build per-project exceptions.
+- Custom mounts: ask the LLM to expose a host directory to the sandbox, read-only or read-write.
 
 ## Install
 
@@ -74,19 +75,19 @@ Open the settings screen:
 /permissions
 ```
 
-The main screen groups toolsets, sandboxes, and scope. Custom Paths opens a path submenu inside Scope.
+The main screen groups toolsets, sandboxes, scope, and the defaults row. Custom Paths opens a path submenu inside Scope, and Custom mounts opens one inside Sandboxes.
 
 | Key | Action |
 | --- | --- |
 | up/k, down/j | move the selection |
 | space | cycle a toolset through off → on → ask → off, toggle a sandbox, or switch the scope |
-| enter/l | open toolset patterns, Unsandboxed tools, or Custom Paths. On a sandbox or Modality, enter acts like space |
+| enter/l | open toolset patterns, Unsandboxed tools, Custom mounts, or Custom Paths. On a sandbox or Modality, enter acts like space. On the defaults row, it saves the settings |
 | s | cycle PROJECT ONLY → EVERYWHERE → CUSTOM PATHS |
 | a | add a directory to the paths |
 | d | remove the selected extra path in Custom Paths |
 | esc/h | close the screen, or leave a submenu |
 
-Each change is saved at once. 
+Each change is saved at once.
 
 ## License
 

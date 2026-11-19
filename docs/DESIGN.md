@@ -122,9 +122,23 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 | `src/gate.ts` | Pure call decision |
 | `src/tool.ts` | The `permissions` tool |
 | `src/patterns.ts` | Pure edits of a pattern list, and the tool names that a pattern matches |
-| `src/ui.ts` | The `/permissions` screen and the pattern editor |
+| `src/ui.ts` | The `/permissions` screen, the pattern editor, the mounts list, and the defaults row |
 | `src/sessions.ts` | Cross-session registry: session claims, child links, ask forwarding |
 | `src/notify.ts` | Reports a waiting question to the terminal host through `herdr:blocked` |
+
+## Custom mounts
+
+A mount is a host directory that the sandbox sees at the same path. The state holds the list, and the launcher turns each entry into one bind: read-only, or writable when the user said so. The list belongs to the user, so the screen edits it, and `add_mount` and `remove_mount` keep it behind a confirmation that names the exact path and mode.
+
+Three rules keep a mount from widening the boundary by accident. A path that the scope roots already cover is skipped, because the root already exposes it. A path that the sandbox owns is refused, because a host bind there would replace a private directory. And the list stops at `MAX_MOUNTS`, so a runaway list cannot make the sandbox unrecognizable.
+
+Mounts apply only while the filesystem layer is not `off`. With `off` the whole host tree is visible, so a mount would add nothing.
+
+## Saved defaults
+
+Each root session writes its own file. The template at `statePath()` holds what a new session starts from, and `save_defaults` copies the session state into it. The session file does not change, so saving a default never moves the running session onto a shared file.
+
+A session with no file of its own reads the template when it exists and the shipped defaults otherwise.
 
 ## State
 

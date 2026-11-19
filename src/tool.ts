@@ -7,7 +7,7 @@ import { platformPolicy, layersEnabled } from "./platform.ts";
 import { SANDBOXES } from "./sandboxes.ts";
 import { statusLine, statusText } from "./status.ts";
 import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
-import { MAX_EXTRA_PATHS, MAX_TOOLSETS, checkPatterns, type StateStore } from "./state.ts";
+import { MAX_EXTRA_PATHS, MAX_MOUNTS, MAX_TOOLSETS, checkPatterns, isProtectedMountPath, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 import { allowsAsk, toolsetMode } from "./types.ts";
 import type { Approvals } from "./approval.ts";
@@ -25,6 +25,9 @@ const parameters = Type.Object({
 			Type.Literal("set_toolset"),
 			Type.Literal("set_sandbox"),
 			Type.Literal("set_unsandboxed_tools"),
+			Type.Literal("add_mount"),
+			Type.Literal("remove_mount"),
+			Type.Literal("save_defaults"),
 		],
 		{ description: "Action to run. Read status first when the reason for a block is unclear." },
 	),
@@ -38,7 +41,8 @@ const parameters = Type.Object({
 			description: "project: project root only. custom: project root plus saved extra paths. everywhere: no path limit.",
 		}),
 	),
-	path: Type.Optional(Type.String({ description: "Directory for add_path and remove_path." })),
+	path: Type.Optional(Type.String({ description: "Directory for add_path, remove_path, add_mount, and remove_mount." })),
+	writable: Type.Optional(Type.Boolean({ description: "add_mount: true mounts the directory read-write, so the sandboxed tools can change it." })),
 	name: Type.Optional(Type.String({ description: "Toolset name for add_toolset, remove_toolset, and set_toolset." })),
 	patterns: Type.Optional(
 		Type.Array(Type.String(), { description: "Regular expression sources for add_toolset, tested against tool names." }),
@@ -292,6 +296,72 @@ async function setUnsandboxedTools(env: ToolEnv): Promise<ToolOutcome> {
 	);
 }
 
+/**
+ * Adds one host directory to the sandbox. The directory must exist, and it must not be one
+ * that the sandbox owns. The confirmation names the exact path and mode, because a writable
+ * mount lets a sandboxed tool change the host.
+ */
+async function addMount(env: ToolEnv): Promise<ToolOutcome> {
+	const value = env.params.path;
+	if (value === undefined || value.trim() === "") return { text: "add_mount needs path.", isError: true };
+	const policy = platformPolicy();
+	if (!layersEnabled(policy)) return { text: policy.reason ?? policy.coverage, isError: true };
+	const resolved = resolveDirectory(env.ctx.cwd, value);
+	if ("error" in resolved) return { text: resolved.error, isError: true };
+	if (isProtectedMountPath(resolved.path)) {
+		return { text: `${resolved.path} belongs to the sandbox itself, so it cannot be mounted.`, isError: true };
+	}
+	const current = env.store.get().sandbox_mounts;
+	if (current.some((entry) => entry.path === resolved.path)) {
+		return { text: `${resolved.path} is already mounted.` };
+	}
+	if (current.length >= MAX_MOUNTS) {
+		return { text: `The list already holds ${MAX_MOUNTS} mounts. Remove one first.`, isError: true };
+	}
+	const writable = env.params.writable === true;
+	const mode = writable ? "read-write" : "read-only";
+	const title = `Mount ${resolved.path} ${mode}?`;
+	const message = `The sandboxed tools can reach ${resolved.path} ${writable ? "and change it" : "but not change it"}.`;
+	if (!(await env.ctx.ui.confirm(title, message))) return declined();
+	return applyChange(
+		env,
+		(state) => ({ ...state, sandbox_mounts: [...state.sandbox_mounts, { path: resolved.path, writable }] }),
+		`Mounted ${resolved.path} ${mode}.`,
+	);
+}
+
+/** Removes one mount. Nothing on the host changes. */
+async function removeMount(env: ToolEnv): Promise<ToolOutcome> {
+	const value = env.params.path;
+	if (value === undefined || value.trim() === "") return { text: "remove_mount needs path.", isError: true };
+	const target = canonicalPath(resolvePath(env.ctx.cwd, value));
+	const entry = env.store.get().sandbox_mounts.find((mount) => mount.path === target);
+	if (entry === undefined) return { text: `${target} is not mounted.`, isError: true };
+	if (!(await env.ctx.ui.confirm(`Unmount ${target}?`, "The sandboxed tools can no longer reach this directory."))) return declined();
+	return applyChange(
+		env,
+		(state) => ({ ...state, sandbox_mounts: state.sandbox_mounts.filter((mount) => mount.path !== target) }),
+		`Unmounted ${target}.`,
+	);
+}
+
+/**
+ * Writes the current session state to the template that a new session starts from. The
+ * session keeps its own file, so this changes the next session and nothing else.
+ */
+async function saveDefaults(env: ToolEnv): Promise<ToolOutcome> {
+	const file = env.store.defaultsFile;
+	if (!(await env.ctx.ui.confirm("Make these settings the default?", `The next session starts from the current settings.\n\nThe template is ${file}.`))) {
+		return declined();
+	}
+	try {
+		env.store.saveDefaults();
+	} catch (error) {
+		return { text: `The template was not saved: ${messageOf(error)}`, isError: true };
+	}
+	return { text: `The next session starts from these settings. The template is ${file}.\n\n${statusText(env.store.get())}` };
+}
+
 async function runAction(env: ToolEnv): Promise<ToolOutcome> {
 	const { action } = env.params;
 	if (action === "status") return { text: statusText(env.store.get()) };
@@ -312,9 +382,15 @@ async function runAction(env: ToolEnv): Promise<ToolOutcome> {
 			return setSandbox(env);
 		case "set_unsandboxed_tools":
 			return setUnsandboxedTools(env);
+		case "add_mount":
+			return addMount(env);
+		case "remove_mount":
+			return removeMount(env);
+		case "save_defaults":
+			return saveDefaults(env);
 		default:
 			return {
-				text: "Unknown action. Use status, set_scope, add_path, remove_path, add_toolset, remove_toolset, set_toolset, set_sandbox, or set_unsandboxed_tools.",
+				text: "Unknown action. Use status, set_scope, add_path, remove_path, add_toolset, remove_toolset, set_toolset, set_sandbox, set_unsandboxed_tools, add_mount, remove_mount, or save_defaults.",
 				isError: true,
 			};
 	}

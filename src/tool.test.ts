@@ -248,3 +248,74 @@ test("set_scope schema exposes all three modes", t => {
  const h = harness(space, "Block");
  assert.deepEqual(h.parameters.properties.scope.anyOf.map((entry: any) => entry.const), ["project", "everywhere", "custom"]);
 });
+
+test("add_mount asks, names the path and mode, and saves a read-only mount", async () => {
+	const space = workspace();
+	try {
+		const withAnswer = harness(space, "Allow once");
+		const added = await withAnswer.run({ action: "add_mount", path: space.outside });
+		assert.equal(added.isError, undefined, added.text);
+		assert.match(added.text, /Mounted/);
+		assert.match(withAnswer.questions[0], new RegExp(`Mount ${space.outside.replaceAll("/", "\\/")} read-only`));
+		assert.deepEqual(withAnswer.store.get().sandbox_mounts, [{ path: space.outside, writable: false }]);
+		// A writable mount is named as read-write.
+		const writable = await withAnswer.run({ action: "add_mount", path: space.root, writable: true });
+		assert.equal(writable.isError, undefined, writable.text);
+		assert.match(withAnswer.questions[1], /read-write/);
+		assert.deepEqual(withAnswer.store.get().sandbox_mounts.at(-1), { path: space.root, writable: true });
+	} finally { space.cleanup(); }
+});
+
+test("add_mount refuses a refused mount, a missing path, a protected path, and a duplicate", async () => {
+	const space = workspace();
+	try {
+		const refusing = harness(space, "Block");
+		assert.match((await refusing.run({ action: "add_mount", path: space.outside })).text, /declined/);
+		assert.deepEqual(refusing.store.get().sandbox_mounts, []);
+		const allowed = harness(space, "Allow once");
+		assert.equal((await allowed.run({ action: "add_mount", path: join(space.root, "missing") })).isError, true);
+		assert.equal((await allowed.run({ action: "add_mount", path: "/run/data" })).isError, true);
+		assert.equal((await allowed.run({ action: "add_mount" })).isError, true);
+		await allowed.run({ action: "add_mount", path: space.outside });
+		assert.match((await allowed.run({ action: "add_mount", path: space.outside })).text, /already mounted/);
+		assert.equal(allowed.store.get().sandbox_mounts.length, 1);
+	} finally { space.cleanup(); }
+});
+
+test("remove_mount asks and removes only a mounted path", async () => {
+	const space = workspace();
+	try {
+		const allowed = harness(space, "Allow once");
+		await allowed.run({ action: "add_mount", path: space.outside });
+		assert.match((await allowed.run({ action: "remove_mount", path: space.outside })).text, /Unmounted/);
+		assert.deepEqual(allowed.store.get().sandbox_mounts, []);
+		assert.equal((await allowed.run({ action: "remove_mount", path: space.outside })).isError, true);
+		await allowed.run({ action: "add_mount", path: space.outside });
+		const refusing = harness(space, "Block");
+		assert.match((await refusing.run({ action: "remove_mount", path: space.outside })).text, /declined/);
+	} finally { space.cleanup(); }
+});
+
+test("save_defaults asks, writes the template, and leaves the session state alone", async () => {
+	const space = workspace();
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = space.root;
+	try {
+		const allowed = harness(space, "Allow once");
+		await allowed.run({ action: "set_scope", scope: "custom" });
+		const before = allowed.store.get();
+		const saved = await allowed.run({ action: "save_defaults" });
+		assert.equal(saved.isError, undefined, saved.text);
+		assert.match(saved.text, /The next session starts from these settings/);
+		assert.deepEqual(allowed.store.get(), before, "the session keeps its own state");
+		// The template file holds the session values.
+		const template = new StateStore(join(space.root, "permissions.json")).get();
+		assert.equal(template.scope, "custom");
+		const refusing = harness(space, "Block");
+		assert.match((await refusing.run({ action: "save_defaults" })).text, /declined/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		space.cleanup();
+	}
+});

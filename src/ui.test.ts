@@ -87,6 +87,7 @@ async function screenFixture(scope: "project" | "everywhere" | "custom" = "every
 		],
 		sandboxes: { filesystem: "off", no_network: false },
 		unsandboxed_tools: ["^exempt_tool$"],
+		sandbox_mounts: [],
 	};
 	const notifications: string[] = [];
 	const inputs: Array<string | undefined> = [];
@@ -96,7 +97,11 @@ async function screenFixture(scope: "project" | "everywhere" | "custom" = "every
 	let screen!: Screen;
 	let renders = 0;
 	let closed = false;
+	// The screen calls saveDefaults and reads the template path, so the fixture names them.
+	const saved: string[] = [];
 	const store = {
+		defaultsFile: "/agent/permissions.json",
+		saveDefaults: () => { saved.push(JSON.stringify(state)); },
 		get: () => state,
 		update: (change: (current: PermissionsState) => PermissionsState) => { const next = change(state); state = { ...next, sandboxes: mergeState(next).sandboxes }; },
 	} as StateStore;
@@ -125,7 +130,7 @@ async function screenFixture(scope: "project" | "everywhere" | "custom" = "every
 		},
 	} as unknown as ExtensionContext;
 	await openPermissions(store, ctx, ["界🧪e\u0301" + "長".repeat(90), "second_" + longName, "exempt_tool"], target, platform);
-	return { inputs, confirmations, setConsent: (value: boolean) => { consent = value; }, state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
+	return { savedDefaults: () => saved, inputs, confirmations, setConsent: (value: boolean) => { consent = value; }, state: () => state, notifications, screen, patterns, longName, edits, renders: () => renders, closed: () => closed };
 }
 
 function assertFits(screen: Screen, width: number): string[] {
@@ -284,7 +289,9 @@ for (const width of [0, 1, 10, 20, 40, 83, 160]) {
  test(`Custom Paths submenu fits width ${width} and protects the root`, async () => {
   const fixture = await screenFixture("project");
   const { screen } = fixture;
+  // Toolsets, two sandboxes, the exceptions row, the mounts row, then Scope.
   for (let i = 0; i < 6; i++) screen.handleInput("j");
+  screen.handleInput("j");
   screen.handleInput("l");
   const lines = screen.render(width);
   for (const line of lines) assert.ok(visibleWidth(line) <= width);
@@ -340,4 +347,56 @@ test("adding a path asks before activating inactive saved extras", async () => {
  f.inputs.push(tmpdir()); f.screen.handleInput("a");
  await new Promise(resolve => setImmediate(resolve));
  assert.equal(f.state().extra_paths.length, 2);
+});
+
+test("the mounts submenu adds, toggles, deletes, and refuses a protected path", async () => {
+ const f = await screenFixture("project");
+ const lines = () => assertFits(f.screen, 120);
+ // Toolsets, two sandboxes, exceptions, then the mounts row.
+ for (let step = 0; step < 5; step += 1) f.screen.handleInput("j");
+ f.screen.handleInput("l");
+ assert.ok(lines().some((line) => line.includes("Custom mounts")));
+ assert.ok(lines().some((line) => line.includes("No mount")));
+ f.inputs.push("/tmp"); f.screen.handleInput("a");
+ await new Promise((resolve) => setImmediate(resolve));
+ assert.equal(f.state().sandbox_mounts.length, 1);
+ assert.equal(f.state().sandbox_mounts[0].writable, false);
+ assert.ok(lines().some((line) => line.includes("[READ ONLY]")));
+ f.screen.handleInput("w");
+ assert.equal(f.state().sandbox_mounts[0].writable, true);
+ assert.ok(lines().some((line) => line.includes("[READ+WRITE]")));
+ f.inputs.push("/run"); f.screen.handleInput("a");
+ await new Promise((resolve) => setImmediate(resolve));
+ assert.equal(f.state().sandbox_mounts.length, 1, "a protected path is refused");
+ assert.match(f.notifications.join("\n"), /belongs to the sandbox/);
+ f.screen.handleInput("d");
+ assert.equal(f.state().sandbox_mounts.length, 0);
+ f.screen.handleInput("h");
+ assert.ok(lines().some((line) => line.includes("Modality")));
+});
+
+test("the mounts submenu fits narrow widths", async () => {
+ for (const width of [20, 40, 83]) {
+  const f = await screenFixture("project");
+  for (let step = 0; step < 5; step += 1) f.screen.handleInput("j");
+  f.screen.handleInput("l");
+  for (const line of f.screen.render(width)) assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+ }
+});
+
+test("the defaults row asks and saves the template", async () => {
+ const f = await screenFixture("project");
+ f.setConsent(true);
+ const lines = f.screen.render(160).map(stripVTControlCharacters);
+ assert.ok(lines.some((line) => line.includes("Make these settings default")));
+ assert.ok(lines.some((line) => line.includes("Defaults")), "the row has its own section");
+ assert.ok(lines.some((line) => line.includes("New sessions start from")));
+ // Walk to the last row: five toolsets, two sandboxes, exceptions, mounts, scope, paths, defaults.
+ for (let step = 0; step < 8; step += 1) f.screen.handleInput("j");
+ f.screen.handleInput("l");
+ await new Promise((resolve) => setImmediate(resolve));
+ assert.ok(f.confirmations.some((text) => /Make these settings the default|template is/.test(text)), "the row asks first");
+ assert.match(f.notifications.join("\n"), /A new session starts from these settings/);
+ assert.equal(f.savedDefaults().length, 1, "the template is written once");
+ assert.deepEqual(f.savedDefaults()[0], JSON.stringify(f.state()), "the template holds the session state");
 });

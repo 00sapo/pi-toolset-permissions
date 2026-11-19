@@ -49,6 +49,7 @@ export function statusText(
 	lines.push(`sandbox coverage: ${policy.coverage}`);
 	if (policy.reason !== undefined) lines.push(`sandbox status: ${policy.reason}`);
 	lines.push(`unsandboxed tools: ${state.unsandboxed_tools.length === 0 ? "none" : state.unsandboxed_tools.join(", ")}`);
+	lines.push(`custom mounts: ${state.sandbox_mounts.length === 0 ? "none" : state.sandbox_mounts.map((mount) => `${mount.path} (${mount.writable ? "read-write" : "read-only"})`).join(", ")}`);
 	lines.push(`scope: ${state.scope} (${scopeLabel(state.scope)})`);
 	lines.push(
 		`paths: ${state.scope === "everywhere" ? "everywhere" : state.scope === "project" || state.extra_paths.length === 0 ? "the project root only" : "the project root, " + state.extra_paths.join(", ")}`,

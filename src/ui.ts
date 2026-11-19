@@ -6,7 +6,7 @@ import { SANDBOXES } from "./sandboxes.ts";
 import type { SandboxInfo } from "./sandboxes.ts";
 import { canonicalPath, resolveDirectory } from "./scope.ts";
 import { appendPattern, matchingNames, removePattern, replacePattern } from "./patterns.ts";
-import { MAX_EXTRA_PATHS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns } from "./state.ts";
+import { MAX_EXTRA_PATHS, MAX_MOUNTS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns, isProtectedMountPath } from "./state.ts";
 import { statusText } from "./status.ts";
 import { sandboxMenuNote, sandboxRowMark, sandboxSectionTitle } from "./sandbox-scope.ts";
 import { layersEnabled, platformPolicy, requiresBashOnly } from "./platform.ts";
@@ -18,19 +18,30 @@ type Row =
 	| { kind: "toolset"; toolset: Toolset }
 	| { kind: "sandbox"; info: SandboxInfo }
 	| { kind: "exceptions" }
+	| { kind: "mounts" }
 	| { kind: "scope" }
+	| { kind: "defaults" }
 	| { kind: "paths" }
-	| { kind: "path"; path: string; root: boolean };
+	| { kind: "path"; path: string; root: boolean }
+	| { kind: "mount"; path: string; writable: boolean };
 
-type View = { kind: "main" } | { kind: "patterns"; name: string } | { kind: "exceptions" } | { kind: "paths" };
+type View =
+	| { kind: "main" }
+	| { kind: "patterns"; name: string }
+	| { kind: "exceptions" }
+	| { kind: "paths" }
+	| { kind: "mounts" };
 
 const SECTION: Record<Row["kind"], string> = {
 	toolset: "Toolsets",
 	sandbox: "Sandboxes",
 	exceptions: "Sandboxes",
+	mounts: "Sandboxes",
 	scope: "Scope",
 	path: "Custom Paths",
 	paths: "Scope",
+	mount: "Custom mounts",
+	defaults: "Defaults",
 };
 
 const LABEL_WIDTH = 24;
@@ -110,9 +121,11 @@ export async function openPermissions(
 			if (sandboxesEnabled) {
 				for (const info of SANDBOXES) rows.push({ kind: "sandbox", info });
 				rows.push({ kind: "exceptions" });
+				rows.push({ kind: "mounts" });
 			}
 			rows.push({ kind: "scope" });
 			rows.push({ kind: "paths" });
+			rows.push({ kind: "defaults" });
 			return rows;
 		};
 
@@ -139,6 +152,17 @@ export async function openPermissions(
 					const note = theme.fg("dim", ` ${count} pattern${count === 1 ? "" : "s"}`);
 					return `   ${marker} ${"Unsandboxed tools".padEnd(labelWidth)}${note}`;
 				}
+				case "mounts": {
+					const count = state.sandbox_mounts.length;
+					const note = theme.fg("dim", ` ${count} mount${count === 1 ? "" : "s"}`);
+					return `   ${marker} ${"Custom mounts".padEnd(labelWidth)}${note}`;
+				}
+				case "mount": {
+					const mode = item.writable ? "[READ+WRITE]" : "[READ ONLY]";
+					return `   ${marker} ${item.path}  ${theme.fg(item.writable ? "success" : "muted", mode)}`;
+				}
+				case "defaults":
+					return `   ${marker} ${"Make these settings default".padEnd(labelWidth)}`;
 				case "scope":
 					return `   ${marker} ${"Modality".padEnd(labelWidth)}[${scopeLabel(state.scope)}]`;
 				case "paths":
@@ -156,7 +180,9 @@ export async function openPermissions(
 			const lines = [` ${theme.bold("Permissions")}`, ""];
 			let section: string | null = null;
 			rows.forEach((item, position) => {
-				const title = (item.kind === "sandbox" || item.kind === "exceptions") ? sandboxSectionTitle(platform) : SECTION[item.kind];
+				// The mounts row belongs to the sandbox section, so it must not repeat its title.
+				const sandboxRow = item.kind === "sandbox" || item.kind === "exceptions" || item.kind === "mounts";
+				const title = sandboxRow ? sandboxSectionTitle(platform) : SECTION[item.kind];
 				if (title !== section) {
 					section = title;
 					if (position > 0) lines.push("");
@@ -176,6 +202,12 @@ export async function openPermissions(
 				}
 				if (item.kind === "exceptions") {
 					lines.push(theme.fg("dim", "     Unsandboxed tools run on the host even while a layer is on."));
+				}
+				if (item.kind === "mounts") {
+					lines.push(theme.fg("dim", "     A mounted directory is visible to the sandboxed tools."));
+				}
+				if (item.kind === "defaults") {
+					lines.push(theme.fg("dim", `     New sessions start from ${store.defaultsFile}`));
 				}
 			});
 			lines.push(
@@ -230,7 +262,8 @@ export async function openPermissions(
 		const renderScreen = (state: PermissionsState, width: number): string[] =>
 			view.kind === "patterns" ? renderPatterns(state, width)
 				: view.kind === "exceptions" ? renderExceptions(state, width)
-					: view.kind === "paths" ? renderPaths(state, width) : renderMain(state, width);
+					: view.kind === "paths" ? renderPaths(state, width)
+						: view.kind === "mounts" ? renderMounts(state, width) : renderMain(state, width);
 
 		/** The exception list. Same keys and layout as a toolset pattern list. */
 		const renderExceptions = (state: PermissionsState, width: number): string[] => {
@@ -266,6 +299,97 @@ export async function openPermissions(
 			"",
 			theme.fg("dim", " j/k move · a add · d remove · h/esc back"),
 		];
+
+		const renderMounts = (state: PermissionsState, width: number): string[] => {
+			const mounts = state.sandbox_mounts;
+			const lines = [
+				` ${theme.bold("Permissions")} ${theme.fg("dim", "›")} ${theme.bold("Custom mounts")}`,
+				theme.fg("dim", ` ${mounts.length} of ${MAX_MOUNTS} mounts · visible to the sandboxed tools`),
+				"",
+			];
+			if (mounts.length === 0) lines.push(theme.fg("dim", "   No mount. Add one to expose a host directory."));
+			mounts.forEach((mount, position) => {
+				const marker = position === patternIndex ? theme.fg("accent", ">") : " ";
+				const mode = mount.writable ? theme.fg("success", "[READ+WRITE]") : theme.fg("muted", "[READ ONLY]");
+				lines.push(`   ${marker} ${clip(mount.path, Math.max(8, width - 18))}  ${mode}`);
+			});
+			lines.push("", theme.fg("dim", " j/k move · a add · w read-only/read-write · d delete · h/esc back"));
+			return lines;
+		};
+
+		/** Adds a host directory to the sandbox after the user names it here. */
+		const addMount = async (): Promise<void> => {
+			if (store.get().sandbox_mounts.length >= MAX_MOUNTS) {
+				notify(`The list already holds ${MAX_MOUNTS} mounts. Remove one first.`, "warning");
+				refresh();
+				return;
+			}
+			const value = await ctx.ui.input("Mount a directory in the sandbox", "/absolute/or/relative/path");
+			if (value === undefined) return;
+			const checked = resolveDirectory(ctx.cwd, value);
+			if ("error" in checked) {
+				notify(checked.error, "error");
+				refresh();
+				return;
+			}
+			if (isProtectedMountPath(checked.path)) {
+				notify(`${checked.path} belongs to the sandbox itself.`, "error");
+				refresh();
+				return;
+			}
+			if (store.get().sandbox_mounts.some((entry) => entry.path === checked.path)) {
+				notify(`${checked.path} is already mounted.`, "warning");
+				refresh();
+				return;
+			}
+			const path = checked.path;
+			update((current) => current.sandbox_mounts.some((entry) => entry.path === path)
+				? current
+				: { ...current, sandbox_mounts: [...current.sandbox_mounts, { path, writable: false }] });
+			patternIndex = Math.max(0, store.get().sandbox_mounts.length - 1);
+			refresh();
+		};
+
+		const toggleMountMode = (position: number): void => {
+			update((current) => ({
+				...current,
+				sandbox_mounts: current.sandbox_mounts.map((entry, at) => (at === position ? { ...entry, writable: !entry.writable } : entry)),
+			}));
+		};
+
+		const removeMount = (position: number): void => {
+			update((current) => ({ ...current, sandbox_mounts: current.sandbox_mounts.filter((_entry, at) => at !== position) }));
+			patternIndex = Math.max(0, Math.min(position, store.get().sandbox_mounts.length - 1));
+		};
+
+		/** Saves the session state as the template that a new session starts from. */
+		const saveDefaults = async (): Promise<void> => {
+			const file = store.defaultsFile;
+			const proceed = await ctx.ui.confirm(
+				"Make these settings the default?",
+				`A new session starts from the current settings.\n\nThe template is ${file}.`,
+			);
+			if (proceed !== true) { refresh(); return; }
+			try {
+				store.saveDefaults();
+				notify(`A new session starts from these settings. The template is ${file}.`, "info");
+			} catch (error) {
+				notify(`The template was not saved: ${messageOf(error)}`, "error");
+			}
+			refresh();
+		};
+
+		const handleMountsInput = (data: string): void => {
+			const mounts = store.get().sandbox_mounts;
+			patternIndex = Math.max(0, Math.min(patternIndex, mounts.length - 1));
+			if (data === "h" || keybindings.matches(data, "tui.select.cancel")) { view = { kind: "main" }; refresh(); return; }
+			if (data === "j" || keybindings.matches(data, "tui.select.down")) { if (mounts.length) patternIndex = (patternIndex + 1) % mounts.length; }
+			else if (data === "k" || keybindings.matches(data, "tui.select.up")) { if (mounts.length) patternIndex = (patternIndex - 1 + mounts.length) % mounts.length; }
+			else if (data === "a") { void addMount(); return; }
+			else if (data === "w") { if (mounts.length) toggleMountMode(patternIndex); }
+			else if (data === "d") { if (mounts.length) removeMount(patternIndex); }
+			refresh();
+		};
 
 		const cycleScope = (): void => {
 			update((current) => ({ ...current, scope: current.scope === "project" ? "everywhere" : current.scope === "everywhere" ? "custom" : "project" }));
@@ -507,10 +631,14 @@ export async function openPermissions(
 		const openSelected = (): void => {
 			const item = buildRows(store.get())[index];
 			if (item === undefined) return;
-			if (item.kind === "exceptions" || item.kind === "paths") {
-				view = { kind: item.kind };
+			if (item.kind === "exceptions" || item.kind === "paths" || item.kind === "mounts") {
+				view = { kind: item.kind === "mounts" ? "mounts" : item.kind };
 				patternIndex = 0;
 				refresh();
+				return;
+			}
+			if (item.kind === "defaults") {
+				void saveDefaults();
 				return;
 			}
 			if (item.kind !== "toolset") {
@@ -659,6 +787,7 @@ export async function openPermissions(
 			if (view.kind === "patterns") handlePatternsInput(data);
 			else if (view.kind === "exceptions") handleExceptionsInput(data);
 			else if (view.kind === "paths") handlePathsInput(data);
+			else if (view.kind === "mounts") handleMountsInput(data);
 			else handleMainInput(data);
 		};
 

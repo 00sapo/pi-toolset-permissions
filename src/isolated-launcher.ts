@@ -11,6 +11,11 @@ export interface IsolatedLaunchOptions {
 	extensions: string[];
 	filesystem: FilesystemMode;
 	paths: string[];
+	/**
+	 * Extra host directories that the sandbox mounts at the same path. A read-write entry
+	 * is bound writable. Each must be an absolute path that the caller validated.
+	 */
+	mounts?: ReadonlyArray<{ path: string; writable: boolean }>;
 	/** True isolates the network namespace. False keeps the host network. The caller always passes it. */
 	network: boolean;
 	piPath?: string;
@@ -407,6 +412,14 @@ export function buildIsolatedLaunch(
 	// so host user names and home paths do not enter the sandbox.
 	for (const entry of etcMounts(exists, options.etcFiles ?? ETC_FILES, options.etcDirectories ?? ETC_DIRECTORIES)) {
 		addMount(entry.source, false);
+	}
+	// Custom mounts. The user named these directories, so the sandbox sees them at the same
+	// path. A path that the scope roots already cover, or that the sandbox owns, is skipped.
+	for (const entry of restricted ? (options.mounts ?? []) : []) {
+		absolutePath(entry.path, "Mount");
+		const path = canonical(resolve(entry.path));
+		if (reservedForSandbox(path) || roots.some((root) => containsPath(root, path))) continue;
+		addMount(path, entry.writable === true);
 	}
 	// A worktree keeps its git directories outside the project. Git needs them to work, and
 	// with the read-only layer off, git must also be able to write its index and objects.

@@ -46,8 +46,16 @@ export interface SandboxFlags {
 	no_network: boolean;
 }
 
+/** One host directory that the sandbox mounts at the same path. */
+export interface SandboxMount {
+	/** Canonical absolute host path. */
+	path: string;
+	/** True mounts read-write, so the sandboxed tools can change the directory. */
+	writable: boolean;
+}
+
 export interface PermissionsState {
-	version: 3;
+	version: 4;
 	scope: ScopeMode;
 	/** Saved absolute directories, active only in custom scope. */
 	extra_paths: string[];
@@ -55,6 +63,8 @@ export interface PermissionsState {
 	sandboxes: SandboxFlags;
 	/** Regular expressions that match tool names which run outside the sandbox. */
 	unsandboxed_tools: string[];
+	/** Host directories that the sandbox mounts, beyond the scope roots. */
+	sandbox_mounts: SandboxMount[];
 }
 
 /** A path patch the gate asks pi to apply before the tool runs. */

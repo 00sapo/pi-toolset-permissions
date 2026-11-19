@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs, { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import fs, { mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+	MAX_MOUNTS,
 	MAX_TOOLSETS,
 	MAX_TOOLSET_PATTERNS,
 	StateStore,
@@ -32,7 +34,7 @@ function withTempDir(run: (dir: string) => void): void {
 
 test("defaults match the sketch", () => {
 	const state = defaultState();
-	assert.equal(state.version, 3);
+	assert.equal(state.version, 4);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, []);
 	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
@@ -66,10 +68,11 @@ test("mergeState repairs garbage", () => {
 		sandboxes: { readonly_bash: "true", no_network: 1 },
 		toolsets: "nope",
 	});
-	assert.equal(state.version, 3);
+	assert.equal(state.version, 4);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, ["/abs/one"]);
 	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
+	assert.deepEqual(state.sandbox_mounts, []);
 	assert.equal(state.toolsets.length, 5);
 });
 
@@ -216,7 +219,7 @@ test("mergeState caps the toolset list", () => {
 test("mergeState accepts junk input", () => {
 	for (const raw of [null, undefined, 42, "junk", [], { flags: [] }, { extra_paths: {} }]) {
 		const state = mergeState(raw);
-		assert.equal(state.version, 3);
+		assert.equal(state.version, 4);
 		assert.equal(state.scope, "project");
 		assert.equal(state.toolsets.length, 5);
 	}
@@ -412,7 +415,7 @@ test("update rebases on the file so two stores keep both changes", () => {
 	});
 });
 
-test("version 3 persists all three modes for builtin and custom toolsets", () => {
+test("version 4 persists all three modes for builtin and custom toolsets", () => {
 	withTempDir((dir) => {
 		const file = join(dir, "permissions.json");
 		const state = defaultState();
@@ -424,7 +427,7 @@ test("version 3 persists all three modes for builtin and custom toolsets", () =>
 		assert.deepEqual(loadState(file), state);
 		const store = new StateStore(file);
 		assert.equal(store.update((current) => current).toolsets[0].enabled, "ask");
-		assert.equal(loadState(file).version, 3);
+		assert.equal(loadState(file).version, 4);
 	});
 });
 
@@ -470,7 +473,7 @@ test("store updates and loads reset filesystem for everywhere scope", () => {
 for (const version of [undefined, 1, 2]) {
  test(`legacy project state version ${version} migrates extras to custom`, () => {
   const migrated = mergeState({ version, scope: "project", extra_paths: ["/saved"], sandboxes: { filesystem: "read+write" } });
-  assert.equal(migrated.version, 3);
+  assert.equal(migrated.version, 4);
   assert.equal(migrated.scope, "custom");
   assert.equal(migrated.sandboxes.filesystem, "read+write");
   assert.deepEqual(mergeState(migrated), migrated);
@@ -517,24 +520,25 @@ test("root sessions start with defaults, resume persists, and children inherit p
   process.env.PI_CODING_AGENT_DIR = dir;
   delete process.env.PI_PERMISSIONS_FILE;
   try {
-   // The older shared file is adopted once, by the first new session only.
+   // The global file is the template: a new session starts from it, and a change in
+   // one session never reaches the other.
    saveState({...defaultState(),scope:'everywhere'});
    const parent = new StateStore(); parent.bindSession('root-one');
-   assert.equal(parent.get().scope,'everywhere','the first session adopts the shared file');
+   assert.equal(parent.get().scope,'everywhere','a new session starts from the template');
    parent.update(s=>({...s,scope:'custom',extra_paths:['/opt/legacy']}));
    const later = new StateStore(); later.bindSession('later-root');
-   assert.deepEqual(later.get(),defaultState(),'a later session starts from the defaults');
+   assert.equal(later.get().scope,'everywhere','a later session still starts from the template, not from the first session');
+   assert.deepEqual(later.get().extra_paths,[],'the first session change stays in its own file');
    parent.update(s=>({...s,scope:'custom',extra_paths:['/opt/extra'],sandboxes:{filesystem:'read+write',no_network:true}}));
    const resumed = new StateStore(); resumed.bindSession('root-one');
    assert.equal(resumed.get().scope,'custom');
    assert.deepEqual(resumed.get().extra_paths,['/opt/extra']);
    assert.equal(resumed.get().sandboxes.filesystem,'read+write');
-   resumed.bindSession('root-two'); assert.deepEqual(resumed.get(),defaultState());
-   resumed.bindSession('root-one'); assert.equal(resumed.get().scope,'custom');
-   // A different root cannot see another root's choices.
+   // A different root starts from the template, never from another root's choices.
    resumed.bindSession('root-two');
-   assert.equal(resumed.get().scope,'project');
+   assert.equal(resumed.get().scope,'everywhere');
    assert.deepEqual(resumed.get().extra_paths,[]);
+   resumed.bindSession('root-one'); assert.equal(resumed.get().scope,'custom');
    resumed.bindSession('root-one'); assert.equal(resumed.get().scope,'custom');
    setChild('child-one',{parentSessionId:'root-one'});
    const child = new StateStore(); child.bindSession('child-one');
@@ -557,6 +561,65 @@ test("root sessions start with defaults, resume persists, and children inherit p
    if(oldFile === undefined) delete process.env.PI_PERMISSIONS_FILE; else process.env.PI_PERMISSIONS_FILE=oldFile;
   }
  });
+});
+
+test("custom mounts repair, cap, and drop paths the sandbox owns", async () => {
+ const { mkdtempSync, mkdirSync, realpathSync } = await import("node:fs");
+ const { join } = await import("node:path");
+ const { tmpdir } = await import("node:os");
+ const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-mounts-")));
+ try {
+  const real = join(dir, "data"); mkdirSync(real);
+  const file = join(dir, "file"); writeFileSync(file, "x");
+  const state = mergeState({ sandbox_mounts: [
+   { path: real, writable: true },
+   { path: real, writable: false },
+   { path: file },
+   { path: "relative/path" },
+   { path: "/run/secrets" },
+   { path: "/usr/share" },
+   "nope",
+  ] });
+  assert.deepEqual(state.sandbox_mounts, [{ path: real, writable: true }], "only the real directory survives, once");
+  // A stored link resolves to its target, so the mount names the real directory.
+  const link = join(dir, "link"); symlinkSync(real, link);
+  assert.deepEqual(mergeState({ sandbox_mounts: [{ path: link }] }).sandbox_mounts, [{ path: real, writable: false }]);
+  // The list is capped.
+  const many = Array.from({ length: MAX_MOUNTS + 4 }, (_, index) => {
+   const path = join(dir, `m${index}`); mkdirSync(path); return { path };
+  });
+  assert.equal(mergeState({ sandbox_mounts: many }).sandbox_mounts.length, MAX_MOUNTS);
+  // An older file has no list, and loads with an empty one.
+  assert.deepEqual(mergeState({ version: 3 }).sandbox_mounts, []);
+ } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("saving the defaults writes the template and leaves the session file alone", async () => {
+ const { mkdtempSync, readFileSync } = await import("node:fs");
+ const { join } = await import("node:path");
+ const { tmpdir } = await import("node:os");
+ const oldAgent = process.env.PI_CODING_AGENT_DIR;
+ const oldFile = process.env.PI_PERMISSIONS_FILE;
+ const dir = mkdtempSync(join(tmpdir(), "pi-defaults-"));
+ process.env.PI_CODING_AGENT_DIR = dir;
+ delete process.env.PI_PERMISSIONS_FILE;
+ try {
+  const session = new StateStore(); session.bindSession("root-defaults");
+  session.update((s) => ({ ...s, scope: "custom", extra_paths: ["/opt/saved"] }));
+  assert.deepEqual(loadState(statePath()).extra_paths, [], "the template is unchanged until the save");
+  session.saveDefaults();
+  assert.deepEqual(loadState(statePath()).extra_paths, ["/opt/saved"], "the template holds the saved values");
+  assert.deepEqual(loadState(session.defaultsFile).extra_paths, ["/opt/saved"]);
+  // A new session starts from the saved template.
+  const next = new StateStore(); next.bindSession("later-defaults");
+  assert.deepEqual(next.get().extra_paths, ["/opt/saved"]);
+  // The session keeps its own file, so the save did not move it.
+  const sessionFile = join(dir, "permissions", "sessions");
+  assert.ok(readFileSync(join(sessionFile, `${createHash("sha256").update("root-defaults").digest("hex")}.json`), "utf8").includes("/opt/saved"));
+ } finally {
+  if (oldAgent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgent;
+  if (oldFile === undefined) delete process.env.PI_PERMISSIONS_FILE; else process.env.PI_PERMISSIONS_FILE = oldFile;
+ }
 });
 
 test("session binding never writes into a read-only agent directory", () => {
