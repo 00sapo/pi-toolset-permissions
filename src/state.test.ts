@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -506,4 +506,78 @@ test("legacy default scope with extras preserves access", () => {
 test("empty and populated unsandboxed patterns survive normalization", () => {
  assert.deepEqual(checkPatterns([], true), { patterns: [] });
  assert.deepEqual(mergeState({ unsandboxed_tools: ["^host_tool$"] }).unsandboxed_tools, ["^host_tool$"]);
+});
+
+test("root sessions start with defaults, resume persists, and children inherit policy", async () => {
+ const {setChild,dropChild} = await import('./sessions.ts');
+ withTempDir(dir => {
+  const oldAgent = process.env.PI_CODING_AGENT_DIR;
+  const oldFile = process.env.PI_PERMISSIONS_FILE;
+  process.env.PI_CODING_AGENT_DIR = dir;
+  delete process.env.PI_PERMISSIONS_FILE;
+  try {
+   // The older shared file is adopted once, by the first new session only.
+   saveState({...defaultState(),scope:'everywhere'});
+   const parent = new StateStore(); parent.bindSession('root-one');
+   assert.equal(parent.get().scope,'everywhere','the first session adopts the shared file');
+   parent.update(s=>({...s,scope:'custom',extra_paths:['/opt/legacy']}));
+   const later = new StateStore(); later.bindSession('later-root');
+   assert.deepEqual(later.get(),defaultState(),'a later session starts from the defaults');
+   parent.update(s=>({...s,scope:'custom',extra_paths:['/opt/extra'],sandboxes:{filesystem:'read+write',no_network:true}}));
+   const resumed = new StateStore(); resumed.bindSession('root-one');
+   assert.equal(resumed.get().scope,'custom');
+   assert.deepEqual(resumed.get().extra_paths,['/opt/extra']);
+   assert.equal(resumed.get().sandboxes.filesystem,'read+write');
+   resumed.bindSession('root-two'); assert.deepEqual(resumed.get(),defaultState());
+   resumed.bindSession('root-one'); assert.equal(resumed.get().scope,'custom');
+   // A different root cannot see another root's choices.
+   resumed.bindSession('root-two');
+   assert.equal(resumed.get().scope,'project');
+   assert.deepEqual(resumed.get().extra_paths,[]);
+   resumed.bindSession('root-one'); assert.equal(resumed.get().scope,'custom');
+   setChild('child-one',{parentSessionId:'root-one'});
+   const child = new StateStore(); child.bindSession('child-one');
+   assert.equal(child.get().scope,'custom');
+   child.update(s=>({...s,scope:'project'})); parent.reload();
+   assert.equal(parent.get().scope,'project');
+   const explicit = new StateStore(join(dir,'explicit.json')); explicit.bindSession('root-one');
+   assert.deepEqual(explicit.get(),defaultState());
+   process.env.PI_PERMISSIONS_FILE = join(dir,'override.json');
+   // PI_PERMISSIONS_FILE is the supported test override and keeps one shared file.
+   const override = new StateStore(); override.bindSession('root-one');
+   assert.deepEqual(override.get(),defaultState());
+   override.update(s=>({...s,scope:'custom',extra_paths:['/opt/override']}));
+   override.bindSession('root-two'); assert.equal(override.get().scope,'custom');
+   resumed.bindSession('root-two'); assert.deepEqual(resumed.get().extra_paths,[]);
+   resumed.bindSession('root-one'); assert.deepEqual(resumed.get().extra_paths,['/opt/extra']);
+  } finally {
+   dropChild('child-one');
+   if(oldAgent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR=oldAgent;
+   if(oldFile === undefined) delete process.env.PI_PERMISSIONS_FILE; else process.env.PI_PERMISSIONS_FILE=oldFile;
+  }
+ });
+});
+
+test("session binding never writes into a read-only agent directory", () => {
+ withTempDir(dir => {
+  const oldAgent = process.env.PI_CODING_AGENT_DIR;
+  const oldFile = process.env.PI_PERMISSIONS_FILE;
+  process.env.PI_CODING_AGENT_DIR = dir;
+  delete process.env.PI_PERMISSIONS_FILE;
+  try {
+   // A read-only mount refuses every write below it.
+   const {mkdirSync, chmodSync, statSync} = fs;
+   mkdirSync(join(dir,"permissions","sessions"),{recursive:true});
+   chmodSync(dir,0o500);
+   const store = new StateStore();
+   // Binding only reads. A write that lands below the frozen directory fails.
+   store.bindSession("frozen-root");
+   assert.deepEqual(store.get(),defaultState());
+   chmodSync(dir,0o700);
+   assert.equal(statSync(join(dir,"permissions","sessions")).isDirectory(),true);
+  } finally {
+   if(oldAgent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR=oldAgent;
+   if(oldFile === undefined) delete process.env.PI_PERMISSIONS_FILE; else process.env.PI_PERMISSIONS_FILE=oldFile;
+  }
+ });
 });

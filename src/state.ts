@@ -1,4 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { childLink } from "./sessions.ts";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { PermissionsState, ScopeMode, Toolset } from "./types.ts";
@@ -261,10 +263,40 @@ export function saveState(state: PermissionsState, file?: string): void {
 export class StateStore {
 	#file: string;
 	#state: PermissionsState;
+	#explicit: boolean;
 	#listeners: Array<(state: PermissionsState) => void> = [];
 
 	constructor(file?: string) {
+		this.#explicit = file !== undefined || Boolean(process.env.PI_PERMISSIONS_FILE);
 		this.#file = file ?? statePath();
+		this.#state = loadState(this.#file);
+	}
+
+	/** Each root session owns a persistent file. Children share the parent policy. */
+	bindSession(sessionId: string): void {
+		if (this.#explicit || !sessionId) return;
+		let root = sessionId;
+		const seen = new Set<string>();
+		while (childLink(root) && !seen.has(root)) {
+			seen.add(root);
+			root = childLink(root)!.parentSessionId;
+		}
+		const key = createHash("sha256").update(root).digest("hex");
+		this.#file = join(dirname(statePath()), "permissions", "sessions", `${key}.json`);
+		// A new session starts from the defaults. The first session after this change
+		// also adopts the older shared file once, so an existing setup is not lost.
+		if (!existsSync(this.#file)) {
+			const marker = join(dirname(statePath()), "permissions", "sessions", ".seeded");
+			const legacy = existsSync(statePath()) && !existsSync(marker) ? loadState(statePath()) : defaultState();
+			this.#state = legacy;
+			try {
+				saveState(legacy, this.#file);
+				writeFileSync(marker, "", { mode: 0o600 });
+			} catch {
+				// An unwritable directory keeps the seed in memory only.
+			}
+			return;
+		}
 		this.#state = loadState(this.#file);
 	}
 
