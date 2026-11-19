@@ -151,7 +151,7 @@ export function isProtectedMountPath(path: string): boolean {
 
 /**
  * Reads the custom mounts. A missing or malformed entry is dropped, and so is a path that
- * does not exist as a directory or that overlaps the sandbox itself. A stale entry must
+ * does not exist as a file or a directory, or that overlaps the sandbox itself. A stale entry must
  * never stop the extension from loading or open a path that the launcher cannot mount.
  */
 function readMounts(value: unknown): SandboxMount[] {
@@ -164,7 +164,8 @@ function readMounts(value: unknown): SandboxMount[] {
 		if (typeof raw !== "string" || !isAbsolute(raw)) continue;
 		let path = raw;
 		try {
-			if (!statSync(raw).isDirectory()) continue;
+			const stats = statSync(raw);
+			if (!stats.isFile() && !stats.isDirectory()) continue;
 			path = realpathSync(raw);
 		} catch {
 			continue;

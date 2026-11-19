@@ -4,7 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { SANDBOXES } from "./sandboxes.ts";
 import type { SandboxInfo } from "./sandboxes.ts";
-import { canonicalPath, resolveDirectory } from "./scope.ts";
+import { canonicalPath, resolveDirectory, resolveExistingPath } from "./scope.ts";
 import { appendPattern, matchingNames, removePattern, replacePattern } from "./patterns.ts";
 import { MAX_EXTRA_PATHS, MAX_MOUNTS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns, isProtectedMountPath } from "./state.ts";
 import { statusText } from "./status.ts";
@@ -324,9 +324,9 @@ export async function openPermissions(
 				refresh();
 				return;
 			}
-			const value = await ctx.ui.input("Mount a directory in the sandbox", "/absolute/or/relative/path");
+			const value = await ctx.ui.input("Mount a file or directory in the sandbox", "/absolute/or/relative/path");
 			if (value === undefined) return;
-			const checked = resolveDirectory(ctx.cwd, value);
+			const checked = resolveExistingPath(ctx.cwd, value);
 			if ("error" in checked) {
 				notify(checked.error, "error");
 				refresh();

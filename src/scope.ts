@@ -64,6 +64,20 @@ export function isAllowedPath(state: PermissionsState, cwd: string, value: strin
 	return state.scope === "custom" && state.extra_paths.some((entry) => isInside(entry, target));
 }
 
+/** Resolve a user-supplied path and check that it exists as a file or a directory. */
+export function resolveExistingPath(cwd: string, value: string): { path: string } | { error: string } {
+	const trimmed = value.trim();
+	if (trimmed === "") return { error: "The path is empty." };
+	const resolved = resolvePath(cwd, trimmed);
+	if (!isAbsolute(resolved)) return { error: `${resolved} is not an absolute path.` };
+	try {
+		if (!statSync(resolved).isFile() && !statSync(resolved).isDirectory()) return { error: `${resolved} is not a file or a directory.` };
+	} catch {
+		return { error: `${resolved} does not exist.` };
+	}
+	return { path: canonicalPath(resolved) };
+}
+
 /** Resolve a user-supplied path and check that it is an existing directory. */
 export function resolveDirectory(cwd: string, value: string): { path: string } | { error: string } {
 	const trimmed = value.trim();

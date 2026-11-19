@@ -580,7 +580,12 @@ test("custom mounts repair, cap, and drop paths the sandbox owns", async () => {
    { path: "/usr/share" },
    "nope",
   ] });
-  assert.deepEqual(state.sandbox_mounts, [{ path: real, writable: true }], "only the real directory survives, once");
+  // The duplicate collapses, the relative and protected paths are dropped, and one file is
+  // a valid mount: that is how a credential or a config file is exposed.
+  assert.deepEqual(state.sandbox_mounts, [
+   { path: real, writable: true },
+   { path: file, writable: false },
+  ]);
   // A stored link resolves to its target, so the mount names the real directory.
   const link = join(dir, "link"); symlinkSync(real, link);
   assert.deepEqual(mergeState({ sandbox_mounts: [{ path: link }] }).sandbox_mounts, [{ path: real, writable: false }]);

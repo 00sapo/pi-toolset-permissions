@@ -6,7 +6,7 @@ import type { Static } from "typebox";
 import { platformPolicy, layersEnabled } from "./platform.ts";
 import { SANDBOXES } from "./sandboxes.ts";
 import { statusLine, statusText } from "./status.ts";
-import { canonicalPath, resolveDirectory, resolvePath } from "./scope.ts";
+import { canonicalPath, resolveDirectory, resolveExistingPath, resolvePath } from "./scope.ts";
 import { MAX_EXTRA_PATHS, MAX_MOUNTS, MAX_TOOLSETS, checkPatterns, isProtectedMountPath, type StateStore } from "./state.ts";
 import type { PermissionsState } from "./types.ts";
 import { allowsAsk, toolsetMode } from "./types.ts";
@@ -297,7 +297,7 @@ async function setUnsandboxedTools(env: ToolEnv): Promise<ToolOutcome> {
 }
 
 /**
- * Adds one host directory to the sandbox. The directory must exist, and it must not be one
+ * Adds one host file or directory to the sandbox. The path must exist, and it must not be one
  * that the sandbox owns. The confirmation names the exact path and mode, because a writable
  * mount lets a sandboxed tool change the host.
  */
@@ -306,7 +306,8 @@ async function addMount(env: ToolEnv): Promise<ToolOutcome> {
 	if (value === undefined || value.trim() === "") return { text: "add_mount needs path.", isError: true };
 	const policy = platformPolicy();
 	if (!layersEnabled(policy)) return { text: policy.reason ?? policy.coverage, isError: true };
-	const resolved = resolveDirectory(env.ctx.cwd, value);
+	// A mount may name one file, which is how a credential or a config file is exposed.
+	const resolved = resolveExistingPath(env.ctx.cwd, value);
 	if ("error" in resolved) return { text: resolved.error, isError: true };
 	if (isProtectedMountPath(resolved.path)) {
 		return { text: `${resolved.path} belongs to the sandbox itself, so it cannot be mounted.`, isError: true };

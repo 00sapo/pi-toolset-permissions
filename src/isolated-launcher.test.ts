@@ -340,6 +340,15 @@ test("custom mounts are bound at their own path, read-only unless writable", () 
 	assert.deepEqual(found.find((entry) => entry.target === scratch), { mode: "--bind", source: scratch, target: scratch });
 });
 
+test("a mount may name one file, which binds the file alone", () => {
+	const credential = "/home/test/.npmrc";
+	const layout = { ...dependencies, exists: (path: string) => path === credential || hostExists(path) };
+	const { args } = buildIsolatedLaunch({ ...options, network: true, mounts: [{ path: credential, writable: false }] }, layout);
+	assert.deepEqual(mounts(args).find((entry) => entry.target === credential), { mode: "--ro-bind", source: credential, target: credential });
+	// The parent directory is not mounted, so the rest of the home stays outside.
+	assert.equal(mounts(args).some((entry) => entry.target === "/home/test"), false);
+});
+
 test("a mount the scope already covers, or the sandbox owns, is not bound twice", () => {
 	const layout = { ...dependencies, exists: (path: string) => path === "/workspace/project/vendor" || path === "/run/data" || hostExists(path) };
 	const { args } = buildIsolatedLaunch({ ...options, network: true,
