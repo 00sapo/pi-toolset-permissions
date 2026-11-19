@@ -42,6 +42,7 @@ test("defaults match the sketch", () => {
 			["read", true, true],
 			["write", false, true],
 			["execute", true, true],
+			["subagent", true, true],
 			["permissions", true, true],
 		],
 	);
@@ -69,7 +70,7 @@ test("mergeState repairs garbage", () => {
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, ["/abs/one"]);
 	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
-	assert.equal(state.toolsets.length, 4);
+	assert.equal(state.toolsets.length, 5);
 });
 
 test("mergeState keeps valid recognized fields", () => {
@@ -92,7 +93,7 @@ test("mergeState drops a toolset with an invalid regex", () => {
 	});
 	assert.deepEqual(
 		state.toolsets.map((toolset) => toolset.name),
-		["read", "write", "execute", "permissions", "good"],
+		["read", "write", "execute", "subagent", "permissions", "good"],
 	);
 });
 
@@ -105,7 +106,7 @@ test("mergeState drops custom toolsets with bad fields", () => {
 			"nope",
 		],
 	});
-	assert.equal(state.toolsets.length, 4);
+	assert.equal(state.toolsets.length, 5);
 });
 
 test("mergeState drops duplicate toolset names", () => {
@@ -180,7 +181,7 @@ for (const enabled of [false, true] as const) {
 		});
 		assert.equal(state.toolsets.some((toolset) => toolset.name === "permission"), false);
 		assert.equal(state.toolsets.filter((toolset) => toolset.name === "permissions").length, 1);
-		assert.equal(state.toolsets.length, 4);
+		assert.equal(state.toolsets.length, 5);
 	});
 }
 
@@ -192,7 +193,7 @@ for (const legacyFirst of [false, true]) {
 		assert.deepEqual(state.toolsets.find((toolset) => toolset.name === "permissions"), canonical);
 		assert.equal(state.toolsets.some((toolset) => toolset.name === "permission"), false);
 		assert.equal(state.toolsets.filter((toolset) => toolset.name === "permissions").length, 1);
-		assert.equal(state.toolsets.length, 4);
+		assert.equal(state.toolsets.length, 5);
 	});
 }
 
@@ -217,7 +218,7 @@ test("mergeState accepts junk input", () => {
 		const state = mergeState(raw);
 		assert.equal(state.version, 3);
 		assert.equal(state.scope, "project");
-		assert.equal(state.toolsets.length, 4);
+		assert.equal(state.toolsets.length, 5);
 	}
 });
 

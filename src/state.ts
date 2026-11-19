@@ -44,6 +44,19 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[
 		],
 	},
 	{
+		// The delegation tools of pi-subagents. They are their own group, so a user can
+		// block delegation without turning off the file tools that a child also needs.
+		name: "subagent",
+		enabled: true,
+		// Delegation only. ask_parent and notify_parent keep their own channel, so a child
+		// reaches its parent whatever this toolset says.
+		patterns: [
+			"^(Agent|subagent|agent)$",
+			"^get_subagent_result$",
+			"^steer_subagent$",
+		],
+	},
+	{
 		// The permissions toolset holds the permissions tool. It is a normal toolset, so the
 		// model and the screen can turn it off.
 		name: "permissions",
