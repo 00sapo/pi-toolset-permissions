@@ -29,6 +29,7 @@ export interface IsolatedRunnerOptions {
 /** One persistent inner Pi. Calls are serialized by the outer extension. */
 export class IsolatedRunner {
 	readonly bridge: PiToolBridge;
+	readonly inventory = new Map<string, string>();
 	private child?: ChildProcessWithoutNullStreams;
 	private server: Server;
 	private directory?: string;
@@ -40,7 +41,21 @@ export class IsolatedRunner {
 		this.bridge = new PiToolBridge({
 			token: randomBytes(32).toString("hex"), timeoutMs: options.timeoutMs ?? 120_000,
 			maxBodyBytes: 32 * 1024 * 1024,
-			send: (record) => this.send(record), onUI: options.onUI,
+			send: (record) => this.send(record), onUI: async (record) => {
+				if (record.method === "notify" && typeof record.message === "string") {
+					try {
+						const data = JSON.parse(record.message);
+						if (data.piToolsetInventory === 1 && Array.isArray(data.tools)) {
+							this.inventory.clear();
+							for (const tool of data.tools) {
+								if (typeof tool.name === "string" && typeof tool.sourceInfo?.path === "string") this.inventory.set(tool.name, tool.sourceInfo.path);
+							}
+							return;
+						}
+					} catch { /* Ordinary extension notification. */ }
+				}
+				return options.onUI?.(record);
+			},
 		});
 		this.server = createServer((req, res) => { void this.bridge.handleRequest(req, res); });
 	}

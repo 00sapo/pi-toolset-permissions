@@ -23,6 +23,7 @@ const dependencies = {
 	readLink: (path: string) => hostLinks[path] ?? null,
 };
 const relay = fileURLToPath(new URL("./inner-relay.ts", import.meta.url));
+const inventory = fileURLToPath(new URL("./inner-inventory.ts", import.meta.url));
 const sandboxSocket = "/run/pi-bridge/model.sock";
 
 const mounts = (args: string[]): Array<{ mode: string; source: string; target: string }> => {
@@ -51,7 +52,7 @@ test("home, credentials, and other users stay out of the sandbox", () => {
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	// The relay file and the project are code and work data, and a project usually sits
 	// below /home. Every other path in that tree must stay out of the sandbox.
-	const allowed = new Set([relay, "/workspace/project", "/workspace/project/extension one.ts", "/usr/bin", "/opt/pi/bin"]);
+	const allowed = new Set([relay, inventory, "/workspace/project", "/workspace/project/extension one.ts", "/usr/bin", "/opt/pi/bin"]);
 	for (const hidden of ["/home", "/root", "/mnt", "/media", "/srv", "/var"]) {
 		for (const bind of mounts(args)) {
 			if (allowed.has(bind.source)) continue;
@@ -67,8 +68,8 @@ test("home, credentials, and other users stay out of the sandbox", () => {
 test("only the system directories, the executables, the project, and the extensions are mounted", () => {
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	assert.deepEqual(mounts(args).map((bind) => bind.source).sort(), [
-		"/etc/nsswitch.conf", "/etc/ssl/certs", "/opt/extensions/two.ts", "/opt/pi/bin", "/opt/pi/bin/pi", "/usr", "/usr/bin",
-		"/usr/bin/node", relay, "/workspace/project", "/workspace/project/extension one.ts", options.socketPath,
+		"/etc/nsswitch.conf", "/etc/ssl/certs", "/opt/extensions", "/opt/pi/bin", "/opt/pi/bin/pi", "/usr", "/usr/bin",
+		"/usr/bin/node", relay, inventory, "/workspace/project", options.socketPath,
 	].sort());
 });
 
@@ -78,7 +79,7 @@ test("the project mount follows the read-only layer and the extensions stay read
 		const found = mounts(args);
 		const project = found.find((bind) => bind.source === "/workspace/project");
 		assert.equal(project?.mode, filesystem === "read" ? "--ro-bind" : "--bind");
-		for (const path of ["/workspace/project/extension one.ts", "/opt/extensions/two.ts", "/opt/pi/bin/pi", "/usr/bin/node", relay]) {
+		for (const path of ["/opt/extensions", "/opt/pi/bin/pi", "/usr/bin/node", relay]) {
 			assert.equal(found.find((bind) => bind.source === path)?.mode, "--ro-bind", path);
 		assert.equal(found.find((bind) => bind.source === "/usr/bin")?.mode, "--ro-bind", "/usr/bin");
 		}

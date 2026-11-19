@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { FilesystemMode } from "./types.ts";
+import { extensionRoot } from "./forwarding.ts";
 import { fileURLToPath } from "node:url";
 
 export interface IsolatedLaunchOptions {
@@ -330,6 +331,7 @@ export function buildIsolatedLaunch(
 	const pi = executable(options.piPath ?? "pi");
 	const node = executable(options.nodePath ?? "node");
 	const relay = canonical(fileURLToPath(new URL("./inner-relay.ts", import.meta.url)));
+	const inventory = canonical(fileURLToPath(new URL("./inner-inventory.ts", import.meta.url)));
 	const workdir = canonical(resolve(options.cwd));
 	const extensions = options.extensions.map((path) => {
 		if (!path || path.includes("\0") || path.startsWith("builtin:")) {
@@ -351,10 +353,10 @@ export function buildIsolatedLaunch(
 	const roots = restricted ? canonicalRoots(options.paths, canonical) : [];
  if (restricted && !roots.some(root => containsPath(root, workdir))) throw new Error("cwd must belong to an allowed root.");
  for (const root of roots) addMount(root, options.filesystem === "read+write");
-	for (const path of extensions) addMount(path, false);
+	for (const path of extensions) addMount(extensionRoot(path, exists), false);
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
-	for (const path of [node, dirname(node), pi, dirname(pi), relay]) addMount(path, false);
+	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory]) addMount(path, false);
 	// `/etc` is mounted entry by entry. The account databases are generated instead of copied,
 	// so host user names and home paths do not enter the sandbox.
 	for (const entry of etcMounts(exists, options.etcFiles ?? ETC_FILES, options.etcDirectories ?? ETC_DIRECTORIES)) {
@@ -453,6 +455,7 @@ export function buildIsolatedLaunch(
 		"--no-approve",
 		"--offline",
 		...extensions.flatMap((path) => ["--extension", path]),
+		"--extension", inventory,
 	);
 	return { command, args, env };
 }
