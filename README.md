@@ -55,7 +55,9 @@ A pattern is a regular expression. The extension tests each pattern against a to
 
 A sandbox is an operating-system boundary for shell commands.
 
-A path scope is the set of directories that file tools can touch. Project scope allows the project directory and the extra paths. Everywhere scope removes the path limit.
+A path scope is the set of directories that file tools can touch. PROJECT ONLY exposes only the project root. CUSTOM PATHS exposes the project root plus saved extra paths. EVERYWHERE removes the path limit.
+
+PROJECT ONLY keeps saved extra paths but does not expose them. Scope also selects the roots for the filesystem sandbox.
 
 The `permissions` toolset holds the `permissions` tool. Off blocks state changes through that tool, but still permits approval requests for ask tools.
 The `/permissions` command always works. Use that command to turn the toolset back on.
@@ -74,7 +76,7 @@ Open the settings screen:
 /permissions
 ```
 
-The screen holds one list with four sections: the toolsets, the sandboxes, the scope, and the paths.
+The main screen groups toolsets, sandboxes, and scope. Custom Paths opens a path submenu inside Scope.
 
 ```text
  Permissions
@@ -86,31 +88,29 @@ The screen holds one list with four sections: the toolsets, the sandboxes, the s
      permissions             [ON] 1 pattern
 
  Sandboxes (ALL tools · Linux)
-     Applies to all tools except exceptions.
+     Applies to all tools except unsandboxed tools.
      Filesystem              [OFF]
      No network              [OFF]
-
- Exceptions
-   > Unsandboxed tools         0 patterns
+     Unsandboxed tools         0 patterns
+     Unsandboxed tools run on the host even while a layer is on.
 
  Scope
-   > All paths               [PROJECT]
+     Scope defines the paths exposed to the read and write toolsets and to the sandboxed tools.
+   > Modality                [PROJECT ONLY]
+     Custom Paths             0 extra paths
 
- Paths
-     /home/user/project  project root
-
- space off → on → ask · enter patterns · s scope · a add path · d remove path · esc close
+ space changes mode · enter opens submenu · s scope · esc close
 ```
 
 | Key | Action |
 | --- | --- |
 | up/k, down/j | move the selection |
 | space | cycle a toolset through off → on → ask → off, toggle a sandbox, or switch the scope |
-| enter/l | open the patterns of the selected toolset, or the exception list. On a sandbox or the scope, enter does what space does |
-| s | switch the scope between project and everywhere |
+| enter/l | open toolset patterns, Unsandboxed tools, or Custom Paths. On a sandbox or Modality, enter acts like space |
+| s | cycle PROJECT ONLY → EVERYWHERE → CUSTOM PATHS |
 | a | add a directory to the paths |
-| d | remove the selected extra path |
-| esc/h | close the screen, or leave the pattern screen |
+| d | remove the selected extra path in Custom Paths |
+| esc/h | close the screen, or leave a submenu |
 
 Each change is saved at once. The esc key never loses work.
 
@@ -213,9 +213,11 @@ The four shipped toolsets start with default patterns. A change to one of them i
 
 ## The paths
 
-The path list starts with the project root. It then holds the extra paths.
+Select Custom Paths under Scope to open the path list. The Project root label comes first, followed by its gray path.
 
-Press `a` to add a directory. Type a path. The extension makes sure that the path is an existing directory. Press `d` to remove the selected extra path.
+The list then shows saved extra paths. Only CUSTOM PATHS exposes them. Adding a new directory selects CUSTOM PATHS and activates all saved extra paths.
+
+Press `a` to add a directory. Type a path. The extension makes sure that the path is an existing directory. Press `d` to remove the selected extra path in Custom Paths.
 
 The project root cannot be removed. The extension saves the resolved path, so a symlink cannot add a larger tree than the dialog shows.
 
@@ -223,7 +225,7 @@ A link inside the project counts as a project path. Reading or writing through t
 
 ## The sandboxes
 
-The screen lists two sandboxes. The first line of the section states the tool coverage. On macOS it reads `Applies to only bash.` and on Linux it reads `Applies to all tools except exceptions.` Windows has no backend, so the section does not appear there.
+The screen lists two sandboxes. The first line of the section states the tool coverage. On macOS it reads `Applies to only bash.` and on Linux it reads `Applies to all tools except unsandboxed tools.` Windows has no backend, so the section does not appear there.
 
 Press space to turn the selected sandbox on or off.
 
@@ -250,12 +252,12 @@ The Filesystem layer limits which directories a tool can reach. It has three sta
 | State | Read | Write |
 |---|---|---|
 | `off` | everywhere | everywhere, the host included |
-| `read` | the project root and the extra paths | nowhere outside the sandbox itself |
-| `read+write` | the project root and the extra paths | the project root and the extra paths |
+| `read` | the roots selected by Scope | nowhere outside the sandbox itself |
+| `read+write` | the roots selected by Scope | the roots selected by Scope |
 
-The project root is the working directory. The extra paths are the directories in the Paths section of the screen. Nothing else outside those roots is readable.
+The project root is the working directory. CUSTOM PATHS also exposes the directories saved in the Custom Paths submenu. PROJECT ONLY excludes those extra directories. Nothing else outside those roots is readable.
 
-The layer needs the project scope. When you set the scope to everywhere, the extension sets the layer to `off` and disables its row in the screen, because the saved roots no longer describe the tree that the layer would allow.
+The layer supports PROJECT ONLY and CUSTOM PATHS. EVERYWHERE turns the layer off and disables its row.
 
 Pi keeps a small set of runtime paths in every state: its own agent directory, its private temporary directory, the programs that run it, and the system directories that programs read. Those paths stay writable where Pi needs them, so a session and its configuration keep working.
 
@@ -275,7 +277,7 @@ Commands that you type with `!` are not sandboxed. A sandbox covers only the too
 
 ### The exception list
 
-Some tools cannot run inside the sandbox. An extension that reads a host socket is one example. The Exceptions row holds one regular expression for each such tool, and a matching tool keeps the host implementation while a layer is on.
+Some tools cannot run inside the sandbox. An extension that reads a host socket is one example. The Unsandboxed tools row inside Sandboxes holds regular expressions for these tools, and a matching tool keeps the host implementation while a layer is on.
 
 Press enter on the row to open the list. It uses the same keys as a toolset pattern list: `a` adds, `enter` edits, `d` deletes, and `esc` goes back. A row shows the pattern and the tool names that it matches. A pattern that does not compile matches nothing, and the list may be empty.
 
@@ -289,8 +291,8 @@ The model uses one tool with ten actions.
 | --- | --- | --- |
 | status | none | show the toolsets, the sandboxes, the scope, and the paths |
 | request_tool | tool, input, reason | request approval for one exact call in ask mode |
-| set_scope | scope | set the scope to project or everywhere |
-| add_path | path | allow one more directory in project scope |
+| set_scope | scope | set the scope to project, everywhere, or custom |
+| add_path | path | add a directory and select custom scope |
 | remove_path | path | remove one extra directory |
 | add_toolset | name, patterns | add a custom toolset |
 | remove_toolset | name | delete a custom toolset |
@@ -352,6 +354,8 @@ A missing file gives the default state. A corrupt file gives the default state t
 
 The old toolset name `permission` loads as `permissions` without changes to its mode or patterns.
 If both names exist, the `permissions` entry takes precedence.
+
+State version 3 distinguishes project-only access from custom access. Older project scope with extra paths loads as custom without changes to access.
 
 A file from version 1 still loads. The extension drops the old flags, keeps the custom toolsets, and writes the default patterns for the shipped toolsets.
 
