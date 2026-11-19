@@ -58,6 +58,7 @@ export default function(pi) {
 	await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 	const port = (server.address() as any).port;
 	const state = { ...defaultState(), sandboxes: { filesystem: "read" as const, no_network: true } };
+	state.toolsets.push({name:"fixture",patterns:[".*"],enabled:true,builtin:false});
 	const save = () => writeFile(join(agent, "permissions.json"), JSON.stringify(state));
 	try {
 		await save();
