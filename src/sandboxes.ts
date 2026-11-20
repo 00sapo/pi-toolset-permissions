@@ -1,4 +1,4 @@
-import { scopeRoots } from "./scope.ts";
+import { sandboxRoots } from "./scope.ts";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { accountFiles, canonicalRoots, containsPath, etcMounts, gitDirectories, systemMounts } from "./isolated-launcher.ts";
@@ -78,7 +78,7 @@ export function shellQuote(value: string): string {
 export function seatbeltProfile(state: PermissionsState, cwd = process.cwd()): string {
  const rules = ["(version 1)", "(allow default)"];
  if (state.sandboxes.filesystem !== "off") {
-  const roots = canonicalRoots(scopeRoots(state, cwd));
+  const roots = canonicalRoots(sandboxRoots(state, cwd));
   const quote = (path: string) => JSON.stringify(path);
   rules.push("(deny file-read*)", "(deny file-write*)");
   for (const root of roots) {
@@ -126,7 +126,7 @@ function linuxPlan(command: string, state: PermissionsState, tools: SandboxTools
    const net = state.sandboxes.no_network ? " --unshare-net" : "";
    return {command: `${shellQuote(tools.bwrap)} --bind / / --dev /dev --proc /proc${net} --die-with-parent -- ${inner}`};
   }
-  const roots = canonicalRoots(scopeRoots(state, cwd));
+  const roots = canonicalRoots(sandboxRoots(state, cwd));
   const workdir = realpathSync(cwd);
   const args = ["--tmpfs", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/etc"];
   const system = systemMounts();

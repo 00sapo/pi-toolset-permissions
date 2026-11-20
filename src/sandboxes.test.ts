@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -221,3 +221,24 @@ test("Linux and macOS filesystem roots honor project-only and custom modes", () 
   }
  } finally { rmSync(extra, { recursive: true, force: true }); }
 });
+
+
+for (const filesystem of ["read", "read+write"] as const) {
+ test(`sandbox backends expose project links with ${filesystem} access`, () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-link-plan-"));
+  const project = join(directory, "project");
+  const target = join(directory, "target");
+  try {
+   mkdirSync(project);
+   mkdirSync(target);
+   symlinkSync(target, join(project, "link"));
+   const state = stateWith(s => { s.sandboxes.filesystem = filesystem; });
+   const command = commandOf(wrapBash("ls", state, TOOLS, project));
+   const flag = filesystem === "read" ? "--ro-bind" : "--bind";
+   assert.ok(command.includes(`'${flag}' '${target}' '${target}'`), command);
+   const profile = seatbeltProfile(state, project);
+   assert.ok(profile.includes(`(allow file-read* (subpath "${target}"))`));
+   assert.equal(profile.includes(`(allow file-write* (subpath "${target}"))`), filesystem === "read+write");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+ });
+}
