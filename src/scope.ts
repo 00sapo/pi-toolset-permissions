@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PermissionsState } from "./types.ts";
@@ -97,4 +97,41 @@ export function resolveDirectory(cwd: string, value: string): { path: string } |
 /** Roots selected by the scope mode. Everywhere has no path boundary. */
 export function scopeRoots(state: PermissionsState, cwd: string): string[] {
 	return state.scope === "everywhere" ? ["/"] : state.scope === "custom" ? [cwd, ...state.extra_paths] : [cwd];
+}
+
+/** Existing external targets reachable through project links, with cycle protection. */
+export function projectLinkTargets(cwd: string): string[] {
+ const project = canonicalPath(cwd);
+ const visited = new Set<string>();
+ const targets = new Set<string>();
+ const walk = (directory: string): void => {
+  let real: string;
+  try { real = realpathSync(directory); } catch { return; }
+  if (visited.has(real)) return;
+  visited.add(real);
+  let entries;
+  try { entries = readdirSync(real, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+   const path = join(real, entry.name);
+   if (entry.isSymbolicLink()) {
+    try {
+     const target = realpathSync(path);
+     const info = statSync(target);
+     if (!info.isFile() && !info.isDirectory()) continue;
+     if (!isInsideLexical(project, target)) targets.add(target);
+     if (info.isDirectory()) walk(target);
+    } catch {
+     // Broken links grant no parent directory access.
+    }
+   } else if (entry.isDirectory()) walk(path);
+  }
+ };
+ walk(project);
+ return [...targets].sort();
+}
+
+/** Sandbox roots include project links, but not links in unrelated custom roots. */
+export function sandboxRoots(state: PermissionsState, cwd: string): string[] {
+ const roots = scopeRoots(state, cwd);
+ return state.scope === "everywhere" ? roots : [...new Set([...roots, ...projectLinkTargets(cwd)])];
 }

@@ -217,3 +217,35 @@ test("scope modes expose only their selected roots without deleting extras", asy
   }
  });
 });
+
+test("sandbox roots include project file and directory links without granting parents", async () => {
+ const { sandboxRoots } = await import("./scope.ts");
+ withWorkspace(space => {
+  const extra = join(space.root, "extra");
+  mkdirSync(extra);
+  symlinkSync(space.outside, join(space.project, "directory"));
+  symlinkSync(join(space.outside, "secret.txt"), join(space.project, "file"));
+  symlinkSync(join(space.root, "missing"), join(space.project, "broken"));
+  symlinkSync(space.project, join(space.outside, "cycle"));
+  const state = stateWith(s => { s.scope = "custom"; s.extra_paths = [extra]; });
+  const roots = sandboxRoots(state, space.project);
+  assert.deepEqual(roots, [space.project, extra, space.outside, join(space.outside, "secret.txt")]);
+  assert.equal(roots.includes(space.root), false);
+  assert.equal(isAllowedPath(state, space.project, join(space.outside, "secret.txt")), false);
+  rmSync(join(space.project, "directory"));
+  assert.deepEqual(sandboxRoots(state, space.project), [space.project, extra, join(space.outside, "secret.txt")]);
+  state.scope = "everywhere";
+  assert.deepEqual(sandboxRoots(state, space.project), ["/"]);
+ });
+});
+
+test("sandbox roots do not follow links in custom roots", async () => {
+ const { sandboxRoots } = await import("./scope.ts");
+ withWorkspace(space => {
+  const extra = join(space.root, "extra");
+  mkdirSync(extra);
+  symlinkSync(space.outside, join(extra, "link"));
+  const state = stateWith(s => { s.scope = "custom"; s.extra_paths = [extra]; });
+  assert.deepEqual(sandboxRoots(state, space.project), [space.project, extra]);
+ });
+});
