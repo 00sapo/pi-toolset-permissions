@@ -22,7 +22,7 @@ const dependencies = {
 	exists: hostExists,
 	readLink: (path: string) => hostLinks[path] ?? null,
 };
-const relay = fileURLToPath(new URL("./inner-relay.ts", import.meta.url));
+const relay = fileURLToPath(new URL("./inner-relay.mjs", import.meta.url));
 const modelRelay = fileURLToPath(new URL("./inner-model.ts", import.meta.url));
 const inventory = fileURLToPath(new URL("./inner-inventory.ts", import.meta.url));
 const sandboxSocket = "/run/pi-bridge/model.sock";

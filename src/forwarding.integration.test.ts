@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,8 +11,15 @@ import { defaultState } from "./state.ts";
 
 const skip = process.env.PI_BRIDGE_LIVE_TEST !== "1" ? "Set PI_BRIDGE_LIVE_TEST=1 with Pi, Node.js, and bwrap available." : false;
 
-for (const [permissionsFirst, defaults, overrides] of [[false, false, false], [true, false, false], [false, true, false], [false, false, true]]) test(`real Pi normal startup forwards tools with permissions loaded ${permissionsFirst ? "first" : "last"}${defaults ? " with default inactive builtins" : " with enabled builtins"}${overrides ? " and foreign overrides" : ""}`, { skip, timeout: 90_000 }, async () => {
+for (const [permissionsFirst, defaults, overrides, packaged] of [[false, false, false, false], [true, false, false, false], [false, true, false, false], [false, false, true, false], [false, false, false, true]]) test(`real Pi normal startup forwards tools with permissions loaded ${permissionsFirst ? "first" : "last"}${defaults ? " with default inactive builtins" : " with enabled builtins"}${overrides ? " and foreign overrides" : ""}${packaged ? " from node_modules" : ""}`, { skip, timeout: 90_000 }, async () => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-forwarding-"));
+	let permissionsEntry = fileURLToPath(new URL("./index.ts", import.meta.url));
+	if (packaged) {
+		const installed = join(directory, "node_modules/pi-toolset-permissions");
+		await cp(fileURLToPath(new URL("./", import.meta.url)), join(installed, "src"), { recursive: true, filter: path => !path.endsWith(".test.ts") });
+		await cp(fileURLToPath(new URL("../package.json", import.meta.url)), join(installed, "package.json"));
+		permissionsEntry = join(installed, "src/index.ts");
+	}
 	const agent = join(directory, "agent");
 	const project = join(directory, "project");
 	const packageRoot = join(directory, "foreign");
@@ -65,7 +72,7 @@ export default function(pi) {
 		await writeFile(join(agent, "settings.json"), JSON.stringify({ defaultProjectTrust: "never", compaction: {enabled:false}, retry:{enabled:false}, cacheWarming:"off" }));
 		await writeFile(join(agent, "models.json"), JSON.stringify({providers:{bridge:{baseUrl:`http://127.0.0.1:${port}/v1`,api:"openai-completions",apiKey:"forwarding-test",authHeader:true,models:[{id:"bridge",reasoning:false,input:["text"],contextWindow:128000,maxTokens:4096,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]}}}));
 		child = spawn(process.env.PI_TEST_EXECUTABLE ?? "pi", ["--mode","rpc","--no-session","--offline","--no-mcp","--no-context-files","--no-skills","--no-prompt-templates","--no-themes","--provider","bridge","--model","bridge",...(defaults ? [] : ["--tools","*"]),
-			...(permissionsFirst ? ["-e",fileURLToPath(new URL("./index.ts", import.meta.url)),"-e",extension] : ["-e",extension,"-e",fileURLToPath(new URL("./index.ts", import.meta.url))]),"--inner-extensions",JSON.stringify([manual,bad])],
+			...(permissionsFirst ? ["-e",permissionsEntry,"-e",extension] : ["-e",extension,"-e",permissionsEntry]),"--inner-extensions",JSON.stringify([manual,bad])],
 			{ cwd: project, env:{...process.env,PI_CODING_AGENT_DIR:agent,PI_PERMISSIONS_FILE:join(agent,"permissions.json")},stdio:"pipe" });
 		child.stdout!.on("data", chunk => {
 			bridge.feed(chunk);

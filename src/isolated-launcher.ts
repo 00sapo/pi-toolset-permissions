@@ -464,7 +464,7 @@ export function buildIsolatedLaunch(
 	const command = executable("bwrap");
 	const pi = executable(options.piPath ?? "pi");
 	const node = executable(options.nodePath ?? "node");
-	const relay = canonical(fileURLToPath(new URL("./inner-relay.ts", import.meta.url)));
+	const relay = canonical(fileURLToPath(new URL("./inner-relay.mjs", import.meta.url)));
 	const modelRelay = canonical(modelRelayPath);
 	const inventory = canonical(fileURLToPath(new URL("./inner-inventory.ts", import.meta.url)));
 	const workdir = canonical(resolve(options.cwd));

@@ -2,10 +2,10 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
-import type { Socket } from "node:net";
+
 import { isAbsolute, join } from "node:path";
 
-async function main(): Promise<void> {
+async function main() {
  const [pi, ...args] = process.argv.slice(2);
  const token = process.env.PI_BRIDGE_TOKEN;
  const socketPath = process.env.PI_BRIDGE_SOCKET;
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
    return symlink(source, join(agentDir, name)).catch(() => {});
   }));
  }
- const sockets = new Set<Socket>();
+ const sockets = new Set();
  const server = createServer({ allowHalfOpen: true }, (client) => {
   const upstream = createConnection({ path: socketPath, allowHalfOpen: true });
   for (const socket of [client, upstream]) {
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   client.pipe(upstream).pipe(client);
  });
  try {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise ((resolve, reject) => {
    server.once("error", reject);
    server.listen(0, "127.0.0.1", () => { server.removeListener("error", reject); resolve(); });
   });
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
    compaction: { enabled: false }, retry: { enabled: false, provider: { maxRetries: 0 } },
    cacheWarming: "off", defaultProjectTrust: "never",
   }), { mode: 0o600 });
-  const env: Record<string, string> = {
+  const env = {
    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/tmp",
    HOSTNAME: process.env.HOSTNAME ?? "sandbox",
    LANG: process.env.LANG ?? "C.UTF-8", TERM: process.env.TERM ?? "dumb",
@@ -97,11 +97,11 @@ async function main(): Promise<void> {
   };
   const child = spawn(pi, args, { stdio: "inherit", env });
   let signalCount = 0;
-  const forward = (signal: NodeJS.Signals) => { child.kill(++signalCount > 1 ? "SIGKILL" : signal); };
+  const forward = (signal) => { child.kill(++signalCount > 1 ? "SIGKILL" : signal); };
   const onTerm = () => forward("SIGTERM");
   const onInt = () => forward("SIGINT");
   const onHup = () => forward("SIGHUP");
-  const onServerError = (error: Error) => {
+  const onServerError = (error) => {
    console.error(`Inner relay failed: ${error.message}`);
    child.kill("SIGKILL");
    process.exitCode = 1;
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   process.on("SIGHUP", onHup);
   server.on("error", onServerError);
   try {
-   const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+   const result = await new Promise ((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
    });
@@ -124,12 +124,12 @@ async function main(): Promise<void> {
   }
  } finally {
   for (const socket of sockets) socket.destroy();
-  if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (server.listening) await new Promise ((resolve) => server.close(() => resolve()));
   await rm(agentDir, { recursive: true, force: true });
  }
 }
 
-await main().catch((error: unknown) => {
+await main().catch((error) => {
  console.error(`Inner relay failed: ${error instanceof Error ? error.message : String(error)}`);
  process.exitCode = 1;
 });
