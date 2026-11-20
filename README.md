@@ -23,7 +23,7 @@ The AI can request state changes when the `permissions` toolset is on. Turn that
 - The model asks you before every change.
 - In ask-mode, approval shows the exact input, and covers that one call.
 - Per-session state, inherited by subagents.
-- Allows global path exceptions but allows simlinks to build per-project exceptions.
+- Allows global path exceptions but allows symlinks to build per-project exceptions.
 - Custom mounts: expose one host directory or file to the sandbox, read-only or read-write.
 - Make these settings default: the next session starts from them.
 
