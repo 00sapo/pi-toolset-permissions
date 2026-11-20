@@ -140,3 +140,51 @@ for (const filesystem of ["read", "read+write", "off"] satisfies FilesystemMode[
 		}
 	});
 }
+
+for (const filesystem of ["read", "read+write"] as const) {
+ test(`project symlink exceptions preserve filesystem ${filesystem}`, { skip: liveSkip, timeout: 90_000 }, async () => {
+  const { sandboxRoots } = await import("./scope.ts");
+  const { defaultState } = await import("./state.ts");
+  const base = process.env.PI_FS_TEST_ROOT ?? join(homedir(), ".cache");
+  await mkdir(base, { recursive: true });
+  const directory = await realpath(await mkdtemp(join(base, "pi-link-test-")));
+  const project = join(directory, "project");
+  const target = join(directory, "target");
+  const file = join(directory, "single.txt");
+  const unrelated = join(directory, "unrelated.txt");
+  let runner: IsolatedRunner | undefined;
+  try {
+   await mkdir(project);
+   await mkdir(target);
+   await writeFile(file, "before");
+   await writeFile(unrelated, "private");
+   await writeFile(join(target, "existing.txt"), "before");
+   await symlink(target, join(project, "directory"));
+   await symlink(file, join(project, "file"));
+   const state = defaultState();
+   state.sandboxes.filesystem = filesystem;
+   const started = await IsolatedRunner.start({
+    cwd: project, extensions: [], filesystem, paths: sandboxRoots(state, project), network: false, timeoutMs: 20_000,
+   });
+   runner = started.runner;
+   for (const path of [join(project, "file"), join(project, "directory", "existing.txt")]) {
+    const read = await runner.execute("read", { path });
+    assert.equal(read.isError, false, text(read));
+    const edit = await runner.execute("edit", { path, edits: [{ oldText: "before", newText: "after" }] });
+    assert.equal(edit.isError, filesystem === "read", text(edit));
+   }
+   const created = join(project, "directory", "new", "created.txt");
+   const write = await runner.execute("write", { path: created, content: "created" });
+   assert.equal(write.isError, filesystem === "read", text(write));
+   assert.equal(await readFile(file, "utf8"), filesystem === "read" ? "before" : "after");
+   assert.equal(await readFile(join(target, "existing.txt"), "utf8"), filesystem === "read" ? "before" : "after");
+   if (filesystem === "read+write") assert.equal(await readFile(join(target, "new", "created.txt"), "utf8"), "created");
+   else await assert.rejects(readFile(join(target, "new", "created.txt")), { code: "ENOENT" });
+   const outside = await runner.execute("read", { path: unrelated });
+   assert.equal(outside.isError, true, text(outside));
+  } finally {
+   await runner?.close();
+   await rm(directory, { recursive: true, force: true });
+  }
+ });
+}
