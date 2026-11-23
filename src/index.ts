@@ -145,7 +145,8 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 
 		const publish = (ctx: ExtensionContext): void => {
 			try {
-				ctx.ui.setStatus("permissions", statusLine(store.get(), "bash"));
+				// Dim, so the footer never competes with the conversation.
+				ctx.ui.setStatus("permissions", ctx.ui.theme.fg("dim", statusLine(store.get(), "bash")));
 			} catch {
 				// The footer is cosmetic. Never fail a handler for it.
 			}

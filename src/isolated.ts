@@ -90,12 +90,15 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 		return value as string[];
 	}
 
-	/** The footer names the layers, their depth, and their platform limit. */
+	/**
+	 * The footer is one dim line. A state word comes first, then the configuration summary.
+	 * `ready` carries the tool count, so a test can wait for a completed start.
+	 */
 	function status(text: string | undefined): void {
 		try {
 			const context = currentContext;
 			if (!context) return;
-			context.ui.setStatus("isolated", text ?? statusLine(store.get(), "all-tools"));
+			context.ui.setStatus("isolated", context.ui.theme.fg("dim", text ?? statusLine(store.get(), "all-tools")));
 		} catch {
 			// The footer is cosmetic.
 		}
@@ -151,7 +154,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			await starting;
 			return runnerKey === key ? runner : ensureRunner(ctx, layers);
 		}
-		status("isolated:starting");
+		status("starting");
 		starting = (async () => {
 			try {
 				await stopRunner();
@@ -229,10 +232,10 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 				}
 				runner = started.runner;
 				runnerKey = key;
-				status(`isolated:ready ${started.tools.length} tools`);
+				status(`ready ${started.tools.length} ${statusLine(store.get(), "all-tools")}`);
 			} catch (error) {
 				await stopRunner();
-				status("isolated:unavailable");
+				status("unavailable");
 				ctx.ui.notify(`The isolated executor is unavailable: ${concise(error)}`, "error");
 			} finally {
 				starting = undefined;
@@ -361,7 +364,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	async function refresh(ctx: ExtensionContext): Promise<void> {
 		try { await ensureRunner(ctx, { ...store.get().sandboxes }); }
 		catch (error) {
-			status("isolated:unavailable");
+			status("unavailable");
 			ctx.ui.notify(`The isolated executor is unavailable: ${concise(error)}`, "error");
 		}
 	}
