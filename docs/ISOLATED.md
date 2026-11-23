@@ -29,7 +29,20 @@ Use `--inner-pi /absolute/path/to/pi` or `--inner-node /absolute/path/to/node` i
 
 Open `/permissions` in the outer Pi to turn the layers on and off. A change restarts the inner process with the new combination.
 
-The screen names the coverage in one line under the Sandboxes heading. On Linux that line reads `Applies to all tools except exceptions.` The footer shows `sandboxes:1/2 all tools`, or `sandboxes:off` when no layer is on.
+The screen names the coverage in one line under the Sandboxes heading. On Linux that line reads `Applies to all tools except exceptions.`
+
+The footer is one dim line, and it names only what is not the default. Every part is a short word.
+
+| Part | Appears when | Example |
+|---|---|---|
+| filesystem | Always | `fs:read`, `fs:rw`, `fs:off` |
+| toolset count | A toolset is off or asks | `4/5 fs:read` |
+| network | Connections are forbidden | `fs:off net:off` |
+| scope | Not the project root | `fs:read custom`, `fs:read all` |
+| `bash` | macOS covers bash only | `fs:read bash` |
+| `sb:off` | The platform has no backend | `sb:off` |
+
+While the executor starts, the same line carries a leading state word: `starting`, `ready 12 fs:read`, or `unavailable`.
 
 On macOS the heading reads `Sandboxes (bash ONLY · macOS)` and the coverage line reads `Applies to only bash.` The layer rows carry `[unavailable here]` for a layer that cannot start here. Turning one on asks for confirmation first, because every call then fails until you turn it off.
 
