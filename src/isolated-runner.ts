@@ -68,18 +68,19 @@ export class IsolatedRunner {
 		});
 	}
 
-	static async start(options: IsolatedRunnerOptions): Promise<{ runner: IsolatedRunner; tools: OpenAITool[] }> {
+	static async start(options: IsolatedRunnerOptions): Promise<{ runner: IsolatedRunner; tools: OpenAITool[]; skipped: string[] }> {
 		const runner = new IsolatedRunner(options);
 		try {
-			await runner.launch();
-			return { runner, tools: await runner.bridge.discover() };
+			const skipped = await runner.launch();
+			return { runner, tools: await runner.bridge.discover(), skipped };
 		} catch (error) {
 			await runner.close();
 			throw error;
 		}
 	}
 
-	private async launch(): Promise<void> {
+	/** Starts the inner process. Returns the host paths that the sandbox could not show. */
+	private async launch(): Promise<string[]> {
 		this.directory = await mkdtemp(join(tmpdir(), "pi-tool-bridge-"));
 		const socketPath = join(this.directory, "model.sock");
 		await new Promise<void>((resolve, reject) => {
@@ -105,6 +106,7 @@ export class IsolatedRunner {
 		child.on("exit", (code, signal) => {
 			this.bridge.fail(new Error(`Inner Pi exited (${signal ?? code}). ${this.stderr}`));
 		});
+		return plan.skipped;
 	}
 
 	private send(record: RpcRecord): Promise<void> {

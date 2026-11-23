@@ -11,6 +11,7 @@ import { MAX_EXTRA_PATHS, MAX_MOUNTS, MAX_TOOLSETS, checkPatterns, isProtectedMo
 import type { PermissionsState } from "./types.ts";
 import { allowsAsk, toolsetMode } from "./types.ts";
 import type { Approvals } from "./approval.ts";
+import { classifyPlacement } from "./paths.ts";
 
 const parameters = Type.Object({
 	action: Type.Union(
@@ -129,6 +130,12 @@ async function addPath(env: ToolEnv): Promise<ToolOutcome> {
 	const checked = resolveDirectory(env.ctx.cwd, value);
 	if ("error" in checked) return { text: checked.error, isError: true };
 	const target = checked.path;
+	// A protected directory would make the filesystem sandbox refuse to start, and that
+	// would remove every sandboxed tool from the session. The sandbox mounts those trees
+	// itself, so the user has nothing to gain here. Name the reason before any dialog.
+	if (classifyPlacement(target) === "refused") {
+		return { text: `${target} belongs to the sandbox itself, so it cannot be an allowed path. Choose a subdirectory, such as one inside /run/user or /etc.`, isError: true };
+	}
 	if (canonicalPath(env.ctx.cwd) === target) return { text: "The project root is always included." };
 	if (state.extra_paths.some((entry) => canonicalPath(entry) === target)) {
 		return { text: `${target} is already an allowed path.` };

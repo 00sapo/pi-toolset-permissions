@@ -400,3 +400,14 @@ test("the defaults row asks and saves the template", async () => {
  assert.equal(f.savedDefaults().length, 1, "the template is written once");
  assert.deepEqual(f.savedDefaults()[0], JSON.stringify(f.state()), "the template holds the session state");
 });
+
+test("adding a whole private tree is refused with a reason", async () => {
+ const f = await screenFixture("project");
+ const saved = [...f.state().extra_paths];
+ for (const path of ["/run", "/etc"]) {
+  f.inputs.push(path); f.screen.handleInput("a");
+  await new Promise(resolve => setImmediate(resolve));
+ }
+ assert.deepEqual(f.state().extra_paths, saved);
+ assert.match(f.notifications.join("\n"), /belongs to the sandbox itself/);
+});

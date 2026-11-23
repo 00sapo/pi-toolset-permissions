@@ -1,7 +1,7 @@
 import { sandboxRoots } from "./scope.ts";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { accountFiles, canonicalRoots, containsPath, etcMounts, gitDirectories, systemMounts } from "./isolated-launcher.ts";
+import { accountFiles, classifyRoots, containsPath, etcMounts, gitDirectories, systemMounts } from "./isolated-launcher.ts";
 import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
 import type { PermissionsState, SandboxFlags } from "./types.ts";
@@ -78,8 +78,14 @@ export function shellQuote(value: string): string {
 export function seatbeltProfile(state: PermissionsState, cwd = process.cwd()): string {
  const rules = ["(version 1)", "(allow default)"];
  if (state.sandboxes.filesystem !== "off") {
-  const roots = canonicalRoots(sandboxRoots(state, cwd));
+  const classified = classifyRoots(sandboxRoots(state, cwd));
+  const roots = classified.roots;
   const quote = (path: string) => JSON.stringify(path);
+  // Seatbelt hides nothing by default, so a reproducible path is already in view. It only
+  // needs the read rule, and the write rule when the layer allows writes.
+  for (const path of classified.reproduced) {
+   roots.push(path);
+  }
   rules.push("(deny file-read*)", "(deny file-write*)");
   for (const root of roots) {
    rules.push(`(allow file-read* (subpath ${quote(root)}))`);
@@ -126,16 +132,32 @@ function linuxPlan(command: string, state: PermissionsState, tools: SandboxTools
    const net = state.sandboxes.no_network ? " --unshare-net" : "";
    return {command: `${shellQuote(tools.bwrap)} --bind / / --dev /dev --proc /proc${net} --die-with-parent -- ${inner}`};
   }
-  const roots = canonicalRoots(sandboxRoots(state, cwd));
+  // A protected root is placed when the sandbox can reproduce it. A project link to a
+  // system binary is ordinary. A plan that cannot show the working directory fails closed.
+  const classified = classifyRoots(sandboxRoots(state, cwd));
+  const roots = classified.roots;
   const workdir = realpathSync(cwd);
-  const args = ["--tmpfs", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/etc"];
   const system = systemMounts();
+  const readText = (path: string) => {try {return readFileSync(path,"utf8");} catch {return null;}};
+  const git = classifyRoots(gitDirectories(workdir,readText));
+  const reproduced = [...new Set([...classified.reproduced, ...git.reproduced])].sort();
+  const visible = [...roots, ...reproduced];
+  const workdirVisible = system.binds.some(bind => containsPath(bind.source, workdir)) || visible.some(root => containsPath(root, workdir));
+  if (!workdirVisible) {
+   return {error: `The filesystem sandbox cannot expose the working directory ${workdir}. Its allowed roots all overlap a system or private tree, so the command did not run. Turn the sandbox off in /permissions, or move the project out of that tree.`};
+  }
+  const writableBind = state.sandboxes.filesystem === "read" ? "--ro-bind" : "--bind";
+  const args = ["--tmpfs", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/etc"];
   for (const bind of system.binds) args.push("--ro-bind", bind.source, bind.target);
   for (const link of system.symlinks) args.push("--symlink", link.target, link.path);
+  // The `/etc` entries come first, and the reproduced binds after them, so a writable
+  // reproduced mount wins over the read-only default entry for the same path.
   for (const entry of etcMounts()) args.push("--ro-bind", entry.source, entry.target);
-  const readText = (path: string) => {try {return readFileSync(path,"utf8");} catch {return null;}};
-  const metadata = canonicalRoots(gitDirectories(workdir,readText));
-  for (const path of [...new Set([...roots,...metadata])].sort()) args.push(state.sandboxes.filesystem === "read" ? "--ro-bind" : "--bind", path,path);
+  for (const path of [...new Set([...roots, ...git.roots])].sort()) args.push(writableBind, path, path);
+  for (const path of reproduced) {
+   const fromGit = git.reproduced.includes(path);
+   args.push(fromGit ? writableBind : "--ro-bind", path, path);
+  }
   const shell = realpathSync(tools.shell);
   if (!system.binds.some(b=>containsPath(b.source,shell))) args.push("--ro-bind", dirname(shell),dirname(shell));
   args.push("--dir", "/run/pi-home", "--setenv", "HOME", "/run/pi-home", "--chdir", workdir, "--die-with-parent");

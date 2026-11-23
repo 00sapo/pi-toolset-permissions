@@ -104,6 +104,8 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 - Treat the `permissions` toolset as binary. It is on or off. Ask would ask the user twice for one change, once in the gate and once in the tool dialog.
 - Treat a link inside the project as a project path. The project contains the link, so the gate accepts a path through it before link resolution. A direct path to the link target still needs an allowed root. Extra roots keep canonical containment, because the user names those directories explicitly.
 - Fail closed. A missing backend or a broken gate blocks the call.
+- Place a protected path instead of failing the launch. A protected path arrives without a user action. A virtual environment links its interpreter to `/usr/bin/python3.13`, and a package manager links a shim into `/usr`. One rule answers every case. A path below a read-only system tree is already visible. A path inside `/etc` or `/run`, which the sandbox mounts empty, goes back in view through one read-only bind. A whole private tree and a pseudo filesystem path are reported and left out. A fatal error would stop every tool in the session.
+- Refuse a whole private tree at the dialog, not at launch. The user can choose a subdirectory and the sandbox binds it. A stored entry that cannot be placed is dropped at load, so a stale file never breaks a session. A clear refusal at the point of choice is better than a silent failure at launch.
 - Follow Pi's prompt events instead of reporting each dialog by hand. Pi already announces every blocking dialog and merges nested ones, so one listener covers the approval dialog, the unknown-tool question, and the change confirmations. A report that the host misses never blocks the dialog.
 - Load the extension once per session. A session claim stops a second copy in the same session, and it lets a child session install its own gate.
 - Write the state file with a temporary file and a rename. A crash cannot leave half a file.
@@ -117,7 +119,8 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 | `src/approval.ts` | Approval dialog and exact-call grants |
 | `src/state.ts` | Defaults, repair, load, atomic save, store |
 | `src/classify.ts` | Tool name to matching toolsets |
-| `src/scope.ts` | Path resolution, containment, directory test |
+| `src/scope.ts` | Path resolution, containment, directory test, project link targets |
+| `src/paths.ts` | Pure containment and placement rules, shared by scope, state, and sandboxes |
 | `src/sandboxes.ts` | Sandbox descriptors, backend detection, command wrappers |
 | `src/gate.ts` | Pure call decision |
 | `src/tool.ts` | The `permissions` tool |

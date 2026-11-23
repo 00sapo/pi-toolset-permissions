@@ -213,8 +213,34 @@ test("rejects invalid socket, cwd, token, and extension arguments", () => {
 	}
 });
 
-test("refuses to mount a path that belongs to the sandbox itself", () => {
-	assert.throws(() => buildIsolatedLaunch({ ...options, cwd: "/run", paths: ["/run"], extensions: [] }, dependencies), /protected path/);
+test("a protected root that the scope produced is reproduced, not fatal", () => {
+	// The reported case: a project `.venv` links its interpreter to a system binary. The
+	// private `/usr` mount already shows it, so the plan names it as covered and starts.
+	const layout = { ...dependencies, exists: (path: string) => path === "/usr/bin/python3.13" || hostExists(path) };
+	const plan = buildIsolatedLaunch({ ...options, paths: ["/workspace/project", "/usr/bin/python3.13"] }, layout);
+	assert.deepEqual(plan.skipped, []);
+	assert.deepEqual(plan.covered, ["/usr/bin/python3.13"]);
+	assert.deepEqual(mounts(plan.args).find((bind) => bind.source === "/usr"), { mode: "--ro-bind", source: "/usr", target: "/usr" });
+});
+
+test("a protected root that the sandbox mounts empty is bound back in view", () => {
+	// `/run` and `/etc` start empty in the sandbox. A host path there stays invisible until a
+	// read-only bind puts it back, so the mount is reproduced instead of dropped.
+	for (const path of ["/run/user/1000", "/etc/hosts"]) {
+		const layout = { ...dependencies, exists: (candidate: string) => candidate === path || hostExists(candidate) };
+		const plan = buildIsolatedLaunch({ ...options, paths: ["/workspace/project", path] }, layout);
+		assert.deepEqual(plan.skipped, [], path);
+		assert.deepEqual(mounts(plan.args).find((bind) => bind.target === path), { mode: "--ro-bind", source: path, target: path }, path);
+	}
+});
+
+test("a path that would replace a private mount is still refused", () => {
+	for (const path of ["/", "/run", "/proc/self", "/dev", "/etc/passwd"]) {
+		const layout = { ...dependencies, exists: (candidate: string) => candidate === path || hostExists(candidate) };
+		const plan = buildIsolatedLaunch({ ...options, paths: ["/workspace/project", path] }, layout);
+		assert.deepEqual(plan.skipped, [path], path);
+		assert.equal(mounts(plan.args).some((bind) => bind.target === path), false, path);
+	}
 });
 
 test("does not mutate caller input or dependencies", () => {
@@ -293,11 +319,37 @@ test("missing /etc entries are skipped instead of failing the launch", () => {
  assert.equal(args.includes("/alias"),false);
  }
  });
- test("restricted roots reject protected ancestors and descendants", () => {
- for (const path of ["/", "/run", "/run/host", "/proc/self", "/dev", "/usr", "/usr/local", "/etc", "/etc/passwd"]) {
- assert.throws(()=>buildIsolatedLaunch({...options, paths:[options.cwd,path]},dependencies), /sandbox|protected|off/);
+ test("protected roots are placed when the sandbox can reproduce them", () => {
+ // A root that the sandbox can reproduce is mounted read-only at its own path. A root that
+ // would replace a private mount is reported and left out. No shape is fatal, because a
+ // fatal error stops every tool in the session.
+ for (const path of ["/run/host", "/usr/local", "/etc", "/run"]) {
+  const plan = buildIsolatedLaunch({...options, paths:[options.cwd,path]}, dependencies);
+  const bind = mounts(plan.args).find(entry => entry.target === path);
+  if (path === "/usr/local") {
+   // The read-only `/usr` mount already shows it, so no bind of its own is needed.
+   assert.equal(bind, undefined, path);
+   assert.deepEqual(plan.covered, [path]);
+   assert.deepEqual(plan.skipped, []);
+   continue;
+  }
+  if (path === "/etc" || path === "/run") {
+   // The whole tree would replace the private mount and the generated account files.
+   assert.equal(bind, undefined, path);
+   assert.deepEqual(plan.skipped, [path], path);
+   continue;
+  }
+  // A subtree of an emptied tree goes back in view with a read-only bind.
+  assert.deepEqual(bind, { mode: "--ro-bind", source: path, target: path }, path);
+  assert.deepEqual(plan.skipped, [], path);
  }
- assert.throws(()=>buildIsolatedLaunch({...options, paths:["/alias"]},{...dependencies, realPath:p=>p === "/alias" ? "/run/secrets" : p}), /sandbox|protected/);
+ for (const path of ["/", "/proc/self", "/dev"]) {
+  const plan = buildIsolatedLaunch({...options, paths:[options.cwd,path]}, dependencies);
+  assert.ok(plan.skipped.includes(path), path);
+ }
+ const alias = buildIsolatedLaunch({...options, paths:[options.cwd, "/alias"]},{...dependencies, realPath:p=>p === "/alias" ? "/run/secrets" : p});
+ assert.deepEqual(alias.skipped, []);
+ assert.deepEqual(mounts(alias.args).find(entry => entry.target === "/run/secrets"), { mode: "--ro-bind", source: "/run/secrets", target: "/run/secrets" });
  });
  test("cwd must belong to an allowed root", () => {
  assert.throws(()=>buildIsolatedLaunch({...options,paths:["/other"]},dependencies), /cwd/);
@@ -349,13 +401,25 @@ test("a mount may name one file, which binds the file alone", () => {
 	assert.equal(mounts(args).some((entry) => entry.target === "/home/test"), false);
 });
 
-test("a mount the scope already covers, or the sandbox owns, is not bound twice", () => {
+test("a mount the scope already covers is not bound twice", () => {
 	const layout = { ...dependencies, exists: (path: string) => path === "/workspace/project/vendor" || path === "/run/data" || hostExists(path) };
 	const { args } = buildIsolatedLaunch({ ...options, network: true,
 		mounts: [{ path: "/workspace/project/vendor", writable: true }, { path: "/run/data", writable: false }] }, layout);
 	const targets = mounts(args).map((entry) => entry.target);
 	assert.equal(targets.includes("/workspace/project/vendor"), false, "the project root already covers it");
-	assert.equal(targets.includes("/run/data"), false, "the sandbox owns /run");
+	// `/run` starts empty, so the mount is reproduced read-only instead of being dropped.
+	assert.deepEqual(mounts(args).find((entry) => entry.target === "/run/data"), { mode: "--ro-bind", source: "/run/data", target: "/run/data" });
+});
+
+test("a user-chosen mount inside an emptied tree becomes visible, and honors the writable flag", () => {
+	const layout = { ...dependencies, exists: (path: string) => path === "/run/secrets/key" || path === "/etc/docker" || hostExists(path) };
+	for (const writable of [false, true]) {
+		const { args } = buildIsolatedLaunch({ ...options, network: true,
+			mounts: [{ path: "/run/secrets/key", writable }, { path: "/etc/docker", writable }] }, layout);
+		const found = mounts(args);
+		assert.deepEqual(found.find((entry) => entry.target === "/run/secrets/key"), { mode: writable ? "--bind" : "--ro-bind", source: "/run/secrets/key", target: "/run/secrets/key" });
+		assert.deepEqual(found.find((entry) => entry.target === "/etc/docker"), { mode: writable ? "--bind" : "--ro-bind", source: "/etc/docker", target: "/etc/docker" });
+	}
 });
 
 test("the filesystem layer off ignores custom mounts", () => {
@@ -614,4 +678,41 @@ test("a nested mount with no symlink in between still applies", () => {
 	const mounts = new Map([["/w/project", { writable: false }], ["/w/project/ext", { writable: false }]]);
 	const found = bindableMounts(mounts, () => null, (path) => path);
 	assert.equal(found.length, 2);
+});
+
+test("a protected root that host content produces is reported, not fatal", () => {
+	// The reported case: a project `.venv` links its interpreter to `/usr/bin/python3.13`.
+	// An allowed root there would replace the read-only `/usr` mount. A fatal error would
+	// stop every tool in the session, so the root is left out and named instead.
+	const layout = { ...dependencies, exists: (path: string) => path === "/usr/bin/python3.13" || hostExists(path) };
+	const plan = buildIsolatedLaunch({ ...options, paths: ["/workspace/project"] }, layout);
+	assert.deepEqual(plan.skipped, []);
+	// The project root is still mounted, so no tool disappears from the session.
+	assert.deepEqual(mounts(plan.args).find((bind) => bind.source === "/workspace/project"), { mode: "--ro-bind", source: "/workspace/project", target: "/workspace/project" });
+	assert.ok(plan.args.includes("--tmpfs"));
+});
+
+test("a protected git pointer is reproduced read-only instead of failing the launch", () => {
+	const files: Record<string, string> = { "/workspace/project/.git": "gitdir: /run/host/gitdir\n" };
+	const layout = { ...dependencies, readText: (path: string) => files[path] ?? null, exists: (path: string) => ["/run/host/gitdir/HEAD", "/run/host/gitdir/objects"].includes(path) || hostExists(path) };
+	const plan = buildIsolatedLaunch(options, layout);
+	assert.deepEqual(plan.skipped, []);
+	assert.deepEqual(mounts(plan.args).find((bind) => bind.source === "/run/host/gitdir"), { mode: "--ro-bind", source: "/run/host/gitdir", target: "/run/host/gitdir" });
+	// Git writes its index when the layer allows it, so the reproduced bind follows the layer.
+	const open = buildIsolatedLaunch({ ...options, filesystem: "read+write" }, layout);
+	assert.deepEqual(mounts(open.args).find((bind) => bind.source === "/run/host/gitdir"), { mode: "--bind", source: "/run/host/gitdir", target: "/run/host/gitdir" });
+});
+
+test("a custom mount that would replace a private mount point is dropped and reported", () => {
+	for (const path of ["/run", "/etc", "/etc/passwd", "/run/pi-bridge"]) {
+		const layout = { ...dependencies, exists: (candidate: string) => candidate === path || hostExists(candidate) };
+		const plan = buildIsolatedLaunch({ ...options, mounts: [{ path, writable: false }] }, layout);
+		assert.deepEqual(plan.skipped, [path], path);
+		assert.deepEqual(mounts(plan.args).filter((bind) => bind.source === path), [], path);
+	}
+});
+
+test("a launch with no skipped path reports an empty list", () => {
+	const plan = buildIsolatedLaunch(options, dependencies);
+	assert.deepEqual(plan.skipped, []);
 });

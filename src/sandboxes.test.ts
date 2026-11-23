@@ -170,12 +170,20 @@ test("detectSandboxTools names the platform and a shell", () => {
 	assert.ok(tools.bwrap === null || tools.bwrap.endsWith("bwrap"));
 });
 
-test("invalid scope fails closed and off does not canonicalize roots", () => {
- const state = stateWith(s=>{s.sandboxes.filesystem="read";s.scope="custom";s.extra_paths=["/"];});
- const plan = wrapBash("ls",state,TOOLS,process.cwd());
- assert.ok(plan && "error" in plan);
- state.sandboxes.filesystem="off";state.sandboxes.no_network=true;
- assert.ok(commandOf(wrapBash("ls",state,TOOLS,"/missing")).includes("--bind / /"));
+test("a protected extra path is kept when reproducible, and an impossible working directory fails closed", async () => {
+ const { mergeState } = await import("./state.ts");
+ // A root that the sandbox reproduces stays, and a root that would replace a private mount
+ // is dropped, so neither one can stop the sandbox.
+ const stored = mergeState({ scope: "custom", extra_paths: ["/", "/run", "/etc/passwd"] });
+ assert.deepEqual(stored.extra_paths, []);
+ const state = stateWith(s => { s.sandboxes.filesystem = "read"; s.scope = "custom"; s.extra_paths = ["/"]; });
+ // The project root still applies, so the command runs and the extra path adds nothing.
+ assert.ok(commandOf(wrapBash("ls", state, TOOLS, process.cwd())).includes("--tmpfs"));
+ // A root that cannot hold the working directory fails closed.
+ const impossible = wrapBash("ls", state, TOOLS, "/missing/cwd");
+ assert.ok(impossible !== null && "error" in impossible);
+ state.sandboxes.filesystem = "off"; state.sandboxes.no_network = true;
+ assert.ok(commandOf(wrapBash("ls", state, TOOLS, "/missing")).includes("--bind / /"));
 });
 
 test("macOS includes explicit Node runtime and Pi session exceptions", () => {

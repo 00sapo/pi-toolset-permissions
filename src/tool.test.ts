@@ -319,3 +319,19 @@ test("save_defaults asks, writes the template, and leaves the session state alon
 		space.cleanup();
 	}
 });
+
+test("add_path refuses a whole private tree before the dialog", async () => {
+	const space = workspace();
+	try {
+		const harnessed = harness(space, "Allow once");
+		for (const path of ["/run", "/etc", "/"]) {
+			const outcome = await harnessed.run({ action: "add_path", path });
+			assert.equal(outcome.isError, true, path);
+			assert.match(outcome.text, /belongs to the sandbox itself/);
+		}
+		assert.equal(harnessed.questions.length, 0, "no dialog is needed for a path that cannot work");
+		assert.deepEqual(harnessed.store.get().extra_paths, []);
+		// An ordinary directory still works, so the refusal is not a blanket block.
+		assert.equal((await harnessed.run({ action: "add_path", path: space.outside })).isError, undefined);
+	} finally { space.cleanup(); }
+});

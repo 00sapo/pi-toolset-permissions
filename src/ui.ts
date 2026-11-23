@@ -5,6 +5,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { SANDBOXES } from "./sandboxes.ts";
 import type { SandboxInfo } from "./sandboxes.ts";
 import { canonicalPath, resolveDirectory, resolveExistingPath } from "./scope.ts";
+import { classifyPlacement } from "./paths.ts";
 import { appendPattern, matchingNames, removePattern, replacePattern } from "./patterns.ts";
 import { MAX_EXTRA_PATHS, MAX_MOUNTS, MAX_TOOLSET_PATTERNS, type StateStore, checkPatterns, isProtectedMountPath } from "./state.ts";
 import { statusText } from "./status.ts";
@@ -452,6 +453,11 @@ export async function openPermissions(
 				return;
 			}
 			const target = checked.path;
+			if (classifyPlacement(target) === "refused") {
+				notify(`${target} belongs to the sandbox itself, so it cannot be an allowed path. Choose a subdirectory, such as one inside /run/user or /etc.`, "error");
+				refresh();
+				return;
+			}
 			const state = store.get();
 			if (canonicalPath(ctx.cwd) === target || state.extra_paths.some((entry) => canonicalPath(entry) === target)) {
 				notify(`${target} is already saved or is the project root.`, "warning");

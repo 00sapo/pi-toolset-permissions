@@ -2,6 +2,7 @@ import { readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PermissionsState } from "./types.ts";
+import { classifyPlacement } from "./paths.ts";
 
 export function stripAt(value: string): string {
 	return value.startsWith("@") ? value.slice(1) : value;
@@ -99,7 +100,15 @@ export function scopeRoots(state: PermissionsState, cwd: string): string[] {
 	return state.scope === "everywhere" ? ["/"] : state.scope === "custom" ? [cwd, ...state.extra_paths] : [cwd];
 }
 
-/** Existing external targets reachable through project links, with cycle protection. */
+/**
+ * Existing external targets reachable through project links, with cycle protection.
+ *
+ * A target that the sandbox cannot place is left out. A target inside `/etc` or `/run` is
+ * kept, because the sandbox mounts those trees empty and a bind puts the target back in
+ * view. A target inside a system tree is left out, because that tree is already visible
+ * read-only. A virtual environment links its interpreter to `/usr/bin/python3.13`, so this
+ * case is ordinary, and walking `/usr` would only cost time.
+ */
 export function projectLinkTargets(cwd: string): string[] {
  const project = canonicalPath(cwd);
  const visited = new Set<string>();
@@ -118,8 +127,13 @@ export function projectLinkTargets(cwd: string): string[] {
      const target = realpathSync(path);
      const info = statSync(target);
      if (!info.isFile() && !info.isDirectory()) continue;
+     // A path that cannot be placed adds nothing, and a covered one is already visible. A
+     // reproduced directory is bound as a whole, so its children need no entries of their
+     // own. Walking any of these trees would only spend time and add noise.
+     const placement = classifyPlacement(target);
+     if (placement === "covered" || placement === "refused") continue;
      if (!isInsideLexical(project, target)) targets.add(target);
-     if (info.isDirectory()) walk(target);
+     if (info.isDirectory() && placement === "free") walk(target);
     } catch {
      // Broken links grant no parent directory access.
     }

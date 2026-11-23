@@ -200,6 +200,12 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 					return;
 				}
 				available = new Set(started.tools.map(tool => tool.function.name));
+				// A host path that the sandbox cannot place is named once, so the user learns why a
+				// project link or a mount reaches nothing. A path inside `/etc` or `/run` is not
+				// reported here, because the launch reproduces it. The rest of the launch still runs.
+				if (started.skipped.length > 0) {
+					ctx.ui.notify(`The sandbox cannot place these paths, because a bind there would replace one of its own mounts: ${started.skipped.join(", ")}. Use a subdirectory instead, and the launch will bind it read-only.`, "warning");
+				}
 				for (const [name, entry] of originals) {
 					const expected = entry.sourceInfo?.path;
 					const actual = started.runner.inventory.get(name);

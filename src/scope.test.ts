@@ -249,3 +249,44 @@ test("sandbox roots do not follow links in custom roots", async () => {
   assert.deepEqual(sandboxRoots(state, space.project), [space.project, extra]);
  });
 });
+
+test("a virtual environment link to the system interpreter is not a sandbox root", async () => {
+ const { sandboxRoots } = await import("./scope.ts");
+ withWorkspace(space => {
+  // A `.venv` is the common case: its interpreter links to a system binary. The sandbox
+  // binds that tree read-only itself, so the link adds no root and no mount.
+  const bin = join(space.project, ".venv", "bin");
+  mkdirSync(bin, { recursive: true });
+  symlinkSync("/usr/bin/python3.13", join(bin, "python"));
+  symlinkSync("/usr/bin", join(bin, "system-bin"));
+  symlinkSync("/run", join(space.project, "whole-tree"));
+  const state = stateWith(s => { s.scope = "project"; });
+  const roots = sandboxRoots(state, space.project);
+  assert.deepEqual(roots, [space.project], "a covered or whole-tree target becomes no root");
+ });
+});
+
+test("a project link into an emptied tree becomes a sandbox root", async () => {
+ const { sandboxRoots } = await import("./scope.ts");
+ withWorkspace(space => {
+  // `/etc` starts empty inside the sandbox, so a link there needs its own bind. Otherwise a
+  // project link to a configuration file would resolve to nothing, even though the link is
+  // perfectly ordinary work. These host entries exist on a Linux host.
+  mkdirSync(join(space.project, "links"));
+  symlinkSync("/etc/alternatives", join(space.project, "links", "alternatives"));
+  symlinkSync("/etc/ssl", join(space.project, "links", "ssl"));
+  const state = stateWith(s => { s.scope = "project"; });
+  const roots = sandboxRoots(state, space.project);
+  assert.ok(roots.includes("/etc/alternatives"), roots.join(","));
+  assert.ok(roots.includes("/etc/ssl"), roots.join(","));
+ });
+});
+
+test("a saved path is kept when the sandbox can reproduce it", async () => {
+ const { mergeState } = await import("./state.ts");
+ // A whole private tree would replace a mount that the sandbox owns, so it is dropped. A
+ // subtree is kept, because a bind puts it back in view. `/usr` stays: the read-only system
+ // mount already shows it, so the entry costs nothing and grants nothing new.
+ const state = mergeState({ scope: "custom", extra_paths: ["/etc/hosts", "/run/user/1000", "/opt/data", "/run", "/etc", "/etc/passwd", "/usr"] });
+ assert.deepEqual(state.extra_paths, ["/etc/hosts", "/run/user/1000", "/opt/data", "/usr"]);
+});

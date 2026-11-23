@@ -64,7 +64,7 @@ PROJECT ONLY keeps saved extra paths but does not expose them. Scope also select
 
 A symlink is a path that points to another path. Project symlinks grant access to their existing file or directory targets outside the project. The filesystem sandbox exposes those targets with the selected read or read-write access. It follows links inside linked directories and prevents cycles. Broken links do not expose their parent directories. Links in custom roots do not add exceptions.
 
-File tools must use the project link path, not the direct external path. Shell commands inside the sandbox can also use the exposed target path. Unrelated external paths stay outside the sandbox. Protected system paths remain unavailable as scope roots. If a project link targets a protected path, sandbox startup fails. Only use project links whose targets you trust.
+File tools must use the project link path, not the direct external path. Shell commands inside the sandbox can also use the exposed target path. Unrelated external paths stay outside the sandbox. A protected path is never fatal, and the sandbox places it when it can. A path below `/usr` is already visible read-only. A path inside `/etc` or `/run` goes back in view through its own bind, so a virtual environment and a configuration directory keep working. Only a whole private tree, or a pseudo filesystem path, is left out with a warning.
 
 The `permissions` toolset holds the `permissions` tool. Off blocks state changes through that tool, but still permits approval requests for ask tools.
 The `/permissions` command always works. Use that command to turn the toolset back on.

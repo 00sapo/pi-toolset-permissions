@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { PermissionsState, SandboxMount, ScopeMode, Toolset } from "./types.ts";
 import { allowsAsk } from "./types.ts";
+import { classifyPlacement } from "./paths.ts";
 
 export const MAX_EXTRA_PATHS = 100;
 export const MAX_TOOLSETS = 50;
@@ -130,9 +131,19 @@ function readExtraPaths(value: unknown): string[] {
 	const result: string[] = [];
 	for (const entry of value) {
 		if (typeof entry !== "string" || !isAbsolute(entry)) continue;
-		if (seen.has(entry)) continue;
-		seen.add(entry);
-		result.push(entry);
+		// A root that the sandbox cannot place would fail at launch, and that would remove
+		// every sandboxed tool from the session. Resolve the links first, so a hand-edited
+		// entry cannot hide such a path behind a link. A path that the sandbox reproduces,
+		// such as `/run/user/1000`, stays, because the launch puts it back in view.
+		let path = entry;
+		try {
+			path = realpathSync(entry);
+		} catch {
+			// A missing path keeps its stored value. The launch skips it.
+		}
+		if (seen.has(path) || classifyPlacement(path) === "refused") continue;
+		seen.add(path);
+		result.push(path);
 		if (result.length >= MAX_EXTRA_PATHS) break;
 	}
 	return result;

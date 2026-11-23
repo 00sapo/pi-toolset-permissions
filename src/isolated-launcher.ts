@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { FilesystemMode } from "./types.ts";
 import { extensionRoot, isBuiltinExtensionSource } from "./forwarding.ts";
 import { fileURLToPath } from "node:url";
+import { SYSTEM_TREES, classifyPlacement, containsPath, reservedForSandbox } from "./paths.ts";
 
 export interface IsolatedLaunchOptions {
 	socketPath: string;
@@ -121,9 +122,7 @@ export function parentDirectories(path: string): string[] {
 	return found;
 }
 
-export function containsPath(root: string, path: string): boolean {
- return root === "/" || path === root || path.startsWith(`${root}/`);
-}
+export { containsPath } from "./paths.ts";
 
 /** The number of path components, so that a parent sorts before its children. */
 function depth(path: string): number {
@@ -210,17 +209,58 @@ export function bindableMounts(
 	return kept;
 }
 
-/** Canonical roots must not replace the private runtime or system mounts. */
-export function canonicalRoots(paths: string[], canonical: (path: string) => string = realpathSync): string[] {
- const protectedPaths = ["/run", "/proc", "/dev", "/sys", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64"];
- return [...new Set(paths.map(path => {
-  absolutePath(path, "Allowed root");
-  const root = canonical(resolve(path));
-  if (protectedPaths.some(p => containsPath(root, p) || containsPath(p, root))) {
-   throw new Error(`The sandbox root ${root} overlaps a protected path. Use filesystem off for unrestricted access.`);
-  }
-  return root;
- }))];
+/** True when the system binds that the sandbox makes on its own already show this path. */
+export function insideSystemTree(path: string): boolean {
+	return SYSTEM_TREES.some((tree) => containsPath(tree, path));
+}
+
+export interface ClassifiedRoots {
+	/** Canonical roots that the sandbox can bind at their own path. */
+	roots: string[];
+	/** Protected roots that the sandbox puts back in view with a read-only bind. */
+	reproduced: string[];
+	/** Protected roots that no mount will cover, so the sandbox cannot reach them. */
+	unreachable: string[];
+	/** Protected roots that the system binds already show read-only, so skipping one loses nothing. */
+	covered: string[];
+}
+
+/**
+ * Splits the requested roots into the ones a sandbox can bind and the ones it cannot.
+ *
+ * A protected root arrives from ordinary work: a `.venv` binary links to `/usr/bin/python3.13`,
+ * and a package manager links a shim into `/usr`. Most protected roots can still be placed.
+ * A root below a system tree is already visible read-only. A root inside a tree that the
+ * sandbox mounts empty, such as `/etc` or `/run`, goes back in view with a read-only bind at
+ * its own path. Only a root that would replace a private mount, or that names a pseudo
+ * filesystem, is left out. The launch continues in every case, because a fatal error stops
+ * every tool in the session. Only a path that is not absolute fails here, because that is a
+ * caller defect, not host content.
+ */
+export function classifyRoots(paths: string[], canonical: (path: string) => string = realpathSync): ClassifiedRoots {
+	const roots: string[] = [];
+	const reproduced: string[] = [];
+	const unreachable: string[] = [];
+	const covered: string[] = [];
+	for (const path of paths) {
+		absolutePath(path, "Allowed root");
+		const root = canonical(resolve(path));
+		const keep = (list: string[]): void => { if (!list.includes(root)) list.push(root); };
+		switch (classifyPlacement(root)) {
+			case "covered":
+				keep(covered);
+				break;
+			case "reproducible":
+				keep(reproduced);
+				break;
+			case "refused":
+				keep(unreachable);
+				break;
+			default:
+				keep(roots);
+		}
+	}
+	return { roots, reproduced, unreachable, covered };
 }
 
 export interface SystemMounts {
@@ -374,20 +414,29 @@ export function agentDirectoryMounts(
 	return found;
 }
 
-/**
- * True when a directory belongs to the sandbox itself, so a host directory must not
- * replace it. `systemMounts` already mounts `/usr` and its links.
- */
-export function reservedForSandbox(path: string): boolean {
-	return ["/run", "/dev", "/proc", "/sys", "/etc", "/tmp", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/var"].some((own) => containsPath(own, path));
-}
-
 /** A minimal account database. The host users and their home paths stay outside the sandbox. */
 export function accountFiles(uid: number, gid: number): Array<{ name: string; content: string }> {
 	return [
 		{ name: "passwd", content: `pi:x:${uid}:${gid}:Sandboxed user:/tmp/home:/bin/sh\n` },
 		{ name: "group", content: `pi:x:${gid}:\n` },
 	];
+}
+
+export interface IsolatedLaunchPlan {
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+	/**
+	 * Host paths that the sandbox cannot show. A path that would replace a private mount,
+	 * or that names a pseudo filesystem, is left out. The rest of the launch still starts,
+	 * so one such path never removes every tool from the session.
+	 */
+	skipped: string[];
+	/**
+	 * Host paths that stay reachable without a bind, because the system mounts already show
+	 * them read-only. No access is lost, so the caller reports no warning for these.
+	 */
+	covered: string[];
 }
 
 /**
@@ -410,7 +459,7 @@ export function accountFiles(uid: number, gid: number): Array<{ name: string; co
 export function buildIsolatedLaunch(
 	options: IsolatedLaunchOptions,
 	dependencies: IsolatedLaunchDependencies = { platform: process.platform, env: process.env, findExecutable },
-): { command: string; args: string[]; env: Record<string, string> } {
+): IsolatedLaunchPlan {
 	if (dependencies.platform !== "linux") throw new Error("The isolated launcher requires Linux.");
 	const canonical = dependencies.realPath ?? ((path: string) => realpathSync(path));
 	const exists = dependencies.exists ?? pathExists;
@@ -486,9 +535,34 @@ export function buildIsolatedLaunch(
 		const previous = writable.get(path);
 		writable.set(path, previous === true || writableHere);
 	};
-	const roots = restricted ? canonicalRoots(options.paths, canonical) : [];
- if (restricted && !roots.some(root => containsPath(root, workdir))) throw new Error("cwd must belong to an allowed root.");
+	// A scope path that an allowed root cannot take is still placed when the sandbox can
+	// reproduce it. A virtual environment links its interpreter to `/usr/bin/python3.13`,
+	// and a package manager links a shim into `/usr`, so the paths arrive without a user
+	// action. The roots that cannot be placed are reported and the launch continues.
+	const classified = restricted ? classifyRoots(options.paths, canonical) : { roots: [], reproduced: [], unreachable: [], covered: [] };
+	const roots = classified.roots;
+	// A working directory inside a system tree is already visible read-only, because the
+	// sandbox binds that tree itself. It is reported, not fatal, so a project below `/usr`
+	// keeps the sandboxed tools available.
+	const workdirInSystemTree = restricted && insideSystemTree(workdir);
+	// A reproduced root counts too: the bind puts the working directory in view, so the
+	// command finds its own files.
+	const workdirPlaced = roots.some(root => containsPath(root, workdir))
+		|| (restricted && classified.reproduced.some(root => containsPath(root, workdir)));
+ if (restricted && !workdirInSystemTree && !workdirPlaced) throw new Error("cwd must belong to an allowed root.");
  for (const root of roots) addMount(root, options.filesystem === "read+write");
+	// A protected root that the scope produced goes back in view with a read-only bind at its
+	// own path. `/etc` and `/run` start empty, so the bind restores the part of the tree that
+	// the work needs, and the sandbox keeps owning the rest. The bind is written after the
+	// private mounts and before the scope roots, so neither a tmpfs nor a root hides it.
+	const reproduced = new Map<string, boolean>();
+	for (const path of restricted ? classified.reproduced : []) reproduced.set(path, false);
+	// A worktree keeps its git directories outside the project. Git needs them to work, and
+	// with the read-only layer off, git must also be able to write its index and objects.
+	// A pointer file is repository content, so a path that cannot be placed is left out.
+	const gitClassification = restricted ? classifyRoots(gitDirectories(workdir, readText, exists), canonical) : { roots: [], reproduced: [], unreachable: [], covered: [] };
+	for (const path of gitClassification.roots) addMount(path, options.filesystem === "read+write");
+	for (const path of gitClassification.reproduced) if (!reproduced.has(path)) reproduced.set(path, options.filesystem === "read+write");
 	for (const path of extensions.filter(path => !isBuiltinExtensionSource(path))) addMount(extensionRoot(path, exists), false);
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
@@ -500,15 +574,25 @@ export function buildIsolatedLaunch(
 	}
 	// Custom mounts. The user named these directories, so the sandbox sees them at the same
 	// path. A path that the scope roots already cover, or that the sandbox owns, is skipped.
+	const refusedMounts: string[] = [];
 	for (const entry of restricted ? (options.mounts ?? []) : []) {
 		absolutePath(entry.path, "Mount");
 		const path = canonical(resolve(entry.path));
-		if (reservedForSandbox(path) || roots.some((root) => containsPath(root, path))) continue;
+		const placement = classifyPlacement(path);
+		if (placement === "refused") {
+			refusedMounts.push(path);
+			continue;
+		}
+		if (roots.some((root) => containsPath(root, path))) continue;
+		// The user named this path, so a reproducible tree becomes visible read-only. A
+		// writable request still reaches the host, as it does for any other mount.
+		if (placement === "reproducible") {
+			reproduced.set(path, entry.writable === true);
+			continue;
+		}
+		if (placement === "covered") continue;
 		addMount(path, entry.writable === true);
 	}
-	// A worktree keeps its git directories outside the project. Git needs them to work, and
-	// with the read-only layer off, git must also be able to write its index and objects.
-	for (const path of restricted ? canonicalRoots(gitDirectories(workdir, readText, exists), canonical) : []) addMount(path, options.filesystem === "read+write");
 	// The Pi configuration. Extensions read rules, agent definitions, and their own packages
 	// from it. The entries are mounted one by one, so credentials, sessions, and caches stay out.
 	const agentDir = options.piAgentDir === undefined ? undefined : canonical(resolve(options.piAgentDir));
@@ -559,9 +643,28 @@ export function buildIsolatedLaunch(
 	for (const path of writable.keys()) mounts.set(path, { source: path, writable: writable.get(path) === true });
 	const system = systemMounts(exists, dependencies.readLink);
 	const reserved = new Set(["/run", "/dev", "/proc", ...system.binds.map((bind) => bind.target)]);
-	for (const path of mounts.keys()) {
-		if (restricted && reserved.has(path)) throw new Error(`The sandbox cannot mount ${path}: the path belongs to the sandbox itself.`);
+	// A mount that lands on a private mount point cannot be placed, so it is dropped. A file
+	// below a system tree binds nothing new, because the tree is already visible read-only.
+	const dropped: string[] = [];
+	for (const path of [...mounts.keys()]) {
+		if (!restricted || !reserved.has(path)) continue;
+		mounts.delete(path);
+		dropped.push(path);
 	}
+	// A protected scope root binds nothing, and a protected git pointer binds nothing either.
+	// A root below a system tree adds no mount, because that tree is already read-only.
+	const skipped = restricted
+		? [...new Set([
+			...classified.unreachable, ...gitClassification.unreachable, ...dropped, ...refusedMounts,
+			// The system binds show this path read-only, so a write there fails. Say so.
+			...(workdirInSystemTree ? [workdir] : []),
+		])].sort()
+		: [];
+	// A covered path loses no access, so it is not a skip. The list is still reported, so a
+	// caller can say why the path needs no mount of its own.
+	const covered = restricted
+		? [...new Set([...classified.covered, ...gitClassification.covered])].sort()
+		: [];
 
 	const args: string[] = [
 		...(options.network ? ["--unshare-net"] : []),
@@ -601,6 +704,8 @@ export function buildIsolatedLaunch(
 		...binds.map((entry) => entry.path),
 		...mirrored.map((entry) => entry.target),
 		...homeMirrored.map((entry) => entry.target),
+		// A reproduced subtree needs its parents, such as `/etc/docker` needing `/etc`.
+		...reproduced.keys(),
 	])].sort();
 	for (const path of targets) {
 		for (const dir of parentDirectories(path)) {
@@ -612,6 +717,13 @@ export function buildIsolatedLaunch(
 	for (const entry of binds) args.push(entry.writable ? "--bind" : "--ro-bind", entry.path, entry.path);
 	for (const entry of mirrored) args.push("--ro-bind", entry.source, entry.target);
 	for (const entry of homeMirrored) args.push("--ro-bind", entry.source, entry.target);
+	// A reproduced path goes back in view at its own path, after every private mount and
+	// after the default `/etc` entries. A read-only bind keeps the sandbox in charge. A
+	// writable bind is the request of the user who named the path, and it wins over a
+	// read-only entry for the same path.
+	for (const [path, writableHere] of [...reproduced.entries()].sort(([a], [b]) => depth(a) - depth(b) || a.localeCompare(b))) {
+		args.push(writableHere ? "--bind" : "--ro-bind", path, path);
+	}
 
 	args.push(
 		"--dir", "/run/pi-bridge",
@@ -639,5 +751,5 @@ export function buildIsolatedLaunch(
 		"--extension", inventory,
 		"--extension", modelRelay,
 	);
-	return { command, args, env };
+	return { command, args, env, skipped, covered };
 }

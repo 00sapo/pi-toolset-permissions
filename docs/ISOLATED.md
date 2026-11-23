@@ -94,6 +94,7 @@ The sandbox starts with an empty root. Only these paths become visible:
 | `~/.gitconfig` and `~/.profile` | read-only | The git identity for a commit, and the shell setup. |
 | Every directory on the host `PATH` | read-only | A program that the outer shell finds by name resolves to the same file. An existing directory also joins `PATH`. |
 | `/tmp`, `/run`, `/dev`, `/proc`, and the home directory | private and empty | Temporary files, the control socket, devices, processes, and `HOME`. |
+| An `/etc` or `/run` path from a project link or a mount | read-only, or writable for a writable mount | One bind puts the needed part back. The rest of the tree stays private. |
 | `/proc/sys/kernel/random` | empty | The host boot identifier stays outside. Random data still comes from `/dev/urandom`. |
 
 The agent directory appears twice: at its host path and at `/run/pi-home/.pi/agent`, so an extension that reads `homedir()` finds it too. The git identity and the profile appear the same way, at their host path and below `/run/pi-home`. A PATH directory that a writable root already covers, or one that belongs to the sandbox, is left to that mount. The relay links both into the private agent directory that the inner Pi uses, so `getAgentDir()` returns the mounted entries.
@@ -109,6 +110,15 @@ A program that the outer configuration writes into a command must exist inside t
 A version manager usually writes a program entry as a symbolic link. The `mise` shims directory holds such links, and several PATH directories on a typical host are links too. bwrap refuses a bind that targets a symbolic link, so the launcher checks each host path between a mount and a nested mount before it writes the arguments. When a link is in between, the nested mount becomes a bind of the file that the link names. The bind is skipped when another mount already shows that file. A link never pulls a system tree into the sandbox.
 
 The restricted states do not make `/tmp`, `/run`, and `/dev` read-only. Those paths belong to the sandbox itself, so a write there changes nothing on the host. A write outside the allowed roots can therefore report success and still leave the host file unchanged.
+
+A protected path reaches the sandbox in one of four ways. The launcher decides the way, and a fatal error never results.
+
+- A path below `/usr`, `/bin`, `/sbin`, `/lib`, or `/lib64` is already visible. The sandbox binds those trees read-only, so no bind is needed and no access is lost.
+- A path inside `/etc` or `/run` is reproduced. The sandbox mounts those trees empty. The launcher then binds the path back at its own path. A scope root binds read-only, and a mount that the user marked writable binds writable. The bind restores only that part of the tree. The rest of `/etc` stays private, and so do the control socket, the relay links, and the generated account files.
+- A whole private tree, such as `/run` or `/etc`, is left out and reported. A bind there would replace a mount that the sandbox owns.
+- A pseudo filesystem path, such as `/proc/self`, is left out and reported. The kernel owns those nodes.
+
+Ordinary work produces these paths without any user action. A virtual environment links its interpreter to `/usr/bin/python3.13`. A package manager links a shim into `/usr`. A project link can name a configuration directory in `/etc`. Each case works. The `.venv` interpreter resolves through the system mount, and a config directory appears through its own bind. The scope keeps a reproducible target instead of dropping it. It does not walk a reproduced directory, because one bind already covers the children. A stored extra path follows the same four rules when the state loads. A dialog refuses a whole private tree before any save, and it names the reason.
 
 With `filesystem off`, `/run` stays private because the bridge socket and the agent directory live there. The rest of the host tree is mounted writable.
 
