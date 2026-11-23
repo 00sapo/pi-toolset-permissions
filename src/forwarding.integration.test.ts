@@ -81,7 +81,7 @@ export default function(pi) {
 			while ((newline = output.indexOf("\n")) !== -1) {
 				const record = JSON.parse(output.slice(0, newline));
 				output = output.slice(newline + 1);
-				if (record.type === "extension_ui_request" && record.statusKey === "isolated" && record.statusText?.startsWith("isolated:ready")) reloadDone?.();
+				if (record.type === "extension_ui_request" && record.statusKey === "isolated" && record.statusText?.includes("ready")) reloadDone?.();
 			}
 		});
 		child.stderr!.on("data", chunk => { stderr += chunk; });
