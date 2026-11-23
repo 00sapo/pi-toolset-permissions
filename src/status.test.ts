@@ -3,32 +3,68 @@ import { test } from "node:test";
 import { statusLine, statusText } from "./status.ts";
 import type { FilesystemMode, PermissionsState } from "./types.ts";
 
-const base = (filesystem: FilesystemMode, no_network = false): PermissionsState => ({
-	version: 4, scope: "project", extra_paths: [], toolsets: [],
+const toolset = (name: string, enabled: boolean | "ask") => ({ name, patterns: [`^${name}$`], enabled, builtin: true });
+
+const base = (filesystem: FilesystemMode, no_network = false, toolsets = [toolset("read", true)]): PermissionsState => ({
+	version: 4, scope: "project", extra_paths: [], toolsets,
 	sandboxes: { filesystem, no_network },
 	unsandboxed_tools: [],
 	sandbox_mounts: [],
 });
 
-test("on Linux the footer names full coverage when a layer is on", () => {
-	assert.match(statusLine(base("read"), "all-tools", "linux"), /sandboxes:1\/2 all tools/);
-	assert.doesNotMatch(statusLine(base("read"), "all-tools", "linux"), /bash only here/);
+test("the footer names the filesystem mode and nothing else when the rest is the default", () => {
+	// The project scope, every toolset on, and an allowed network are the defaults, so a
+	// quiet footer keeps only the filesystem mode.
+	assert.equal(statusLine(base("read"), "all-tools", "linux"), "fs:read");
+	assert.equal(statusLine(base("read+write"), "all-tools", "linux"), "fs:rw");
+	assert.equal(statusLine(base("off"), "all-tools", "linux"), "fs:off");
+	// No separator survives at the end, and no word repeats.
+	for (const mode of ["off", "read", "read+write"] as const) {
+		const line = statusLine(base(mode), "all-tools", "linux");
+		assert.equal(line, line.trim());
+		assert.equal(line.includes("  "), false, line);
+	}
 });
 
-test("with no layer on the footer says off", () => {
-	assert.match(statusLine(base("off"), "all-tools", "linux"), /sandboxes:off/);
+test("the line stays short in every combination", () => {
+	const state = base("read+write", true, [toolset("read", true), toolset("write", "ask"), toolset("execute", false)]);
+	const line = statusLine(state, "all-tools", "linux");
+	assert.equal(line, "1/3 fs:rw net:off");
+	assert.ok(line.length <= 32, `${line.length} chars: ${line}`);
 });
 
-test("on macOS the footer warns that full coverage is bash only", () => {
+test("a count appears only when a toolset is off or asks", () => {
+	assert.equal(statusLine(base("read", false, [toolset("read", true), toolset("write", true)]), "all-tools", "linux"), "fs:read");
+	assert.match(statusLine(base("read", false, [toolset("read", true), toolset("write", false)]), "all-tools", "linux"), /^1\/2 /);
+	assert.match(statusLine(base("read", false, [toolset("read", "ask")]), "all-tools", "linux"), /^0\/1 /);
+});
+
+test("the network part appears only when connections are forbidden", () => {
+	assert.equal(statusLine(base("off", false), "all-tools", "linux").includes("net:"), false);
+	assert.equal(statusLine(base("off", true), "all-tools", "linux"), "fs:off net:off");
+});
+
+test("the scope adds a word only when it is not the project root", () => {
+	const state = base("read");
+	assert.equal(statusLine(state, "all-tools", "linux").includes("project"), false);
+	state.scope = "custom";
+	assert.equal(statusLine(state, "all-tools", "linux"), "fs:read custom");
+	state.scope = "everywhere";
+	assert.equal(statusLine(state, "all-tools", "linux"), "fs:read all");
+});
+
+test("on macOS the footer adds one word for the bash-only coverage", () => {
 	const line = statusLine(base("read"), "all-tools", "darwin");
-	assert.match(line, /all tools/);
-	assert.match(line, /bash only here/);
+	assert.equal(line, "fs:read bash");
+	// The bash entry point is exactly what the layer covers, so no note is needed there.
+	assert.equal(statusLine(base("read"), "bash", "darwin"), "fs:read");
 });
 
-test("on Windows the footer says the sandbox is disabled", () => {
-	const line = statusLine(base("read"), "all-tools", "win32");
-	assert.match(line, /sandbox:disabled/);
-	assert.doesNotMatch(line, /sandboxes:1\/2/);
+test("on Windows the footer names a disabled sandbox and no layer state", () => {
+	for (const no_network of [false, true]) {
+		const line = statusLine(base("read", no_network), "all-tools", "win32");
+		assert.equal(line, "sb:off");
+	}
 });
 
 test("the text report names the coverage for each platform", () => {
@@ -41,12 +77,12 @@ test("the text report names the coverage for each platform", () => {
 	assert.match(windows, /WSL2/);
 });
 
-test("filesystem modes appear in reports and active counts ignore off", () => {
- for (const mode of ["off", "read", "read+write"] as const) {
-  assert.ok(statusLine(base(mode), "all-tools", "linux").includes(`filesystem:${mode}`));
-  assert.match(statusText(base(mode)), new RegExp(`filesystem=${mode.replace("+", "\\+")}`));
-  assert.match(statusLine(base(mode, true), "all-tools", "linux"), mode === "off" ? /sandboxes:1\/2/ : /sandboxes:2\/2/);
- }
+test("the report keeps every detail that the footer drops", () => {
+	for (const mode of ["off", "read", "read+write"] as const) {
+		assert.match(statusText(base(mode)), new RegExp(`filesystem=${mode.replace("+", "\\+")}`));
+	}
+	assert.match(statusText(base("off", true)), /network=forbid connections/);
+	assert.match(statusText(base("off", false)), /network=allow connections/);
 });
 
 test("the report names the unsandboxed tools", () => {
@@ -58,16 +94,16 @@ test("the report names the unsandboxed tools", () => {
 });
 
 test("status distinguishes active roots from saved extras for every scope", () => {
- const state = base("off"); state.extra_paths = ["/saved"];
- for (const scope of ["project", "custom", "everywhere"] as const) {
-  state.scope = scope;
-  const report = statusText(state);
-  assert.match(report, /saved extra paths: 1/);
-  assert.ok(report.includes(`scope: ${scope}`));
-  const paths = report.split("\n").find(line => line.startsWith("paths:"))!;
-  assert.equal(paths.includes("/saved"), scope === "custom");
-  assert.ok(statusLine(state).includes(scope === "project" ? "PROJECT ONLY" : scope === "custom" ? "CUSTOM PATHS" : "EVERYWHERE"));
- }
+	const state = base("off");
+	state.extra_paths = ["/saved"];
+	for (const scope of ["project", "custom", "everywhere"] as const) {
+		state.scope = scope;
+		const report = statusText(state);
+		assert.match(report, /saved extra paths: 1/);
+		assert.ok(report.includes(`scope: ${scope}`));
+		const paths = report.split("\n").find((line) => line.startsWith("paths:"))!;
+		assert.equal(paths.includes("/saved"), scope === "custom");
+	}
 });
 
 test("the report lists the custom mounts with their mode", () => {

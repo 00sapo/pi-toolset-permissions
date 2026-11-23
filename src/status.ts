@@ -1,34 +1,50 @@
 /** Footer and text reports. Pure: no runtime imports, so the tests can load it. */
 
-import { SANDBOXES } from "./sandboxes.ts";
-import { platformPolicy, requiresBashOnly } from "./platform.ts";
+import { platformPolicy } from "./platform.ts";
 import type { SandboxTarget } from "./sandbox-scope.ts";
 import { networkLabel, scopeLabel, toolsetMode } from "./types.ts";
 import type { PermissionsState } from "./types.ts";
 
-function onOff(value: boolean): string {
-	return value ? "on" : "off";
+/**
+ * The short word for a filesystem mode. It is the only part that always appears, because
+ * the filesystem layer is the restriction that a user changes most often.
+ */
+function filesystemWord(state: PermissionsState): string {
+	return state.sandboxes.filesystem === "read+write" ? "rw" : state.sandboxes.filesystem === "read" ? "read" : "off";
+}
+
+/** The short word for the scope. The project root is the default, so it adds no word. */
+function scopeWord(state: PermissionsState): string | undefined {
+	return state.scope === "custom" ? "custom" : state.scope === "everywhere" ? "all" : undefined;
 }
 
 /**
- * One-line summary for the footer. The sandbox part names the coverage: every tool on
- * Linux, bash only on macOS, and disabled on Windows.
+ * One short line for the footer. It names only what is not the default: the toolset count
+ * when a toolset is not on, the filesystem mode, the network when connections are forbidden,
+ * and the scope unless it is the project root.
+ *
+ * The caller applies the dim color. This function returns plain text, so a test and an RPC
+ * client read the same string.
  */
 export function statusLine(
 	state: PermissionsState,
 	target: SandboxTarget = "bash",
 	platform: NodeJS.Platform = process.platform,
 ): string {
+	const parts: string[] = [];
+	// A count costs space, so it appears only when a toolset is off or asks.
 	const on = state.toolsets.filter((toolset) => toolset.enabled === true).length;
-	const ask = state.toolsets.filter((toolset) => toolset.enabled === "ask").length;
-	const head = `toolsets: ${on} on ${ask} ask ${state.toolsets.length - on - ask} off`;
+	if (on < state.toolsets.length) parts.push(`${on}/${state.toolsets.length}`);
 	const policy = platformPolicy(platform);
-	if (policy.plan === "disabled") return `${head} sandbox:disabled ${scopeLabel(state.scope)}`;
-	const active = SANDBOXES.filter((sandbox) => sandbox.key === "filesystem" ? state.sandboxes.filesystem !== "off" : state.sandboxes.no_network).length;
-	if (active === 0) return `${head} sandboxes:off filesystem:${state.sandboxes.filesystem} ${scopeLabel(state.scope)}`;
-	const depth = target === "all-tools" ? "all tools" : "bash only";
-	const warning = requiresBashOnly(policy) && target === "all-tools" ? " (bash only here)" : "";
-	return `${head} sandboxes:${active}/${SANDBOXES.length} ${depth}${warning} filesystem:${state.sandboxes.filesystem} ${scopeLabel(state.scope)}`;
+	// Windows has no backend, so the layer state would only mislead.
+	parts.push(policy.plan === "disabled" ? "sb:off" : `fs:${filesystemWord(state)}`);
+	// A forbidden network is the unusual state, so the allowed one stays silent.
+	if (state.sandboxes.no_network && policy.plan !== "disabled") parts.push("net:off");
+	// The sandbox covers bash alone on macOS, and every other tool must then be off.
+	if (policy.plan === "bash-only" && target === "all-tools") parts.push("bash");
+	const scope = scopeWord(state);
+	if (scope !== undefined) parts.push(scope);
+	return parts.join(" ");
 }
 
 /** Compact text report of the current state. It always names the coverage and the platform. */
