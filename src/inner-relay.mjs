@@ -20,6 +20,9 @@ async function main() {
  await mkdir(agentDir, { recursive: true });
  // PATH names only sandbox paths. Link the programs instead of naming their host directories.
  await mkdir("/run/pi-bin", { recursive: true });
+ // A writable temp directory. A read-only scope can bind the host `/tmp` over the private one.
+ const tempDir = process.env.TMPDIR;
+ if (tempDir) await mkdir(tempDir, { recursive: true });
  await Promise.all([
   symlink(pi, "/run/pi-bin/pi").catch(() => {}),
   symlink(process.execPath, "/run/pi-bin/node").catch(() => {}),
@@ -94,6 +97,7 @@ async function main() {
    PI_TOOLSET_INNER: "1", PI_BRIDGE_SOCKET: socketPath, PI_BRIDGE_TOKEN: token,
    PI_PARENT_MODEL_URL: `http://127.0.0.1:${address.port}`,
    PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0",
+   ...(tempDir ? { TMPDIR: tempDir } : {}),
   };
   const child = spawn(pi, args, { stdio: "inherit", env });
   let signalCount = 0;

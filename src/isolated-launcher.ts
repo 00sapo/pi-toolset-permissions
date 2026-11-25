@@ -399,6 +399,9 @@ export function homeMounts(
 /** Where the extra home entries appear inside the sandbox, below the private home. */
 export const HOME_MIRROR = "/run/pi-home";
 
+/** A writable temp directory for the inner tools. A read-only scope can bind `/tmp`. */
+export const SANDBOX_TEMP_DIR = "/run/pi-home/tmp";
+
 /** The agent-directory entries that exist on the host. A missing entry is skipped. */
 export function agentDirectoryMounts(
 	agentDir: string,
@@ -501,6 +504,9 @@ export function buildIsolatedLaunch(
 		// A fixed host name. The default would show the name of the host machine.
 		HOSTNAME: HOST_NAME,
 	};
+	// The temp directory lives below `/run`. A read-only scope path for `/tmp` would otherwise
+	// make every temp file fail, including the state that an extension writes at load.
+	if (restricted) env.TMPDIR = SANDBOX_TEMP_DIR;
 
 	const executable = (name: string): string => {
 		const found = dependencies.findExecutable(name, hostPath);

@@ -98,6 +98,7 @@ The sandbox starts with an empty root. Only these paths become visible:
 | A generated `/etc/passwd` and `/etc/group` | generated | One account named `pi`. Host accounts stay outside. |
 | Node.js, Pi, and their bin directories | read-only | The inner process. |
 | `/run/pi-bin` | symlinks | `node` and `pi` under a sandbox path, so `PATH` names no host directory. |
+| `/run/pi-home/tmp` | writable | The temp directory that the inner tools use. It stays writable when a read-only scope binds `/tmp`. |
 | The relay file | read-only | The program that connects the inner Pi to the control socket. |
 | The working directory | follows the filesystem state | The project root. `read` mounts it read-only, `read+write` mounts it writable. |
 | Package roots for discovered and manual extensions | read-only | Source files, sibling imports, and dependencies. |
@@ -165,7 +166,7 @@ A symbolic link inside the project can reach only a mounted path. A link to a ho
 
 The kernel version and the hardware names remain visible, because a program cannot run without the kernel interface.
 
-Process IDs are isolated, and `/proc` shows only the sandbox. The inner environment excludes inherited API keys and Node loader variables.
+Process IDs are isolated, and `/proc` shows only the sandbox. The inner environment excludes inherited API keys and Node loader variables. `TMPDIR` names the private temp directory, so temp files never reach the host `/tmp`.
 
 The control socket carries HTTP model requests. RPC uses standard input and output. An extension that corrupts those streams can stop the executor. The protocol is not a boundary against forged results from a hostile extension. An extension inside the sandbox already holds the token, so the socket adds no reach to it.
 

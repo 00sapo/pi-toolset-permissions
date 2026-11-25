@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { hostname } from "node:os";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HOST_NAME, HOME_AGENT_DIR, HOME_MIRROR, accountFiles, bindableMounts, buildIsolatedLaunch, crossesLink, homeMounts, parentDirectories, systemMounts } from "./isolated-launcher.ts";
+import { HOST_NAME, HOME_AGENT_DIR, HOME_MIRROR, SANDBOX_TEMP_DIR, accountFiles, bindableMounts, buildIsolatedLaunch, crossesLink, homeMounts, parentDirectories, systemMounts } from "./isolated-launcher.ts";
 
 const options = {
 	socketPath: "/tmp/private bridge/model.sock", token: "test-token", cwd: "/workspace/project",
@@ -175,18 +175,26 @@ test("environment is an allowlist, not inherited credentials or loader settings"
 		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/run/pi-home", LANG: "C.UTF-8", TERM: "xterm",
 		PI_TOOLSET_INNER: "1", PI_BRIDGE_GENERATE_ACCOUNTS: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
 		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent-private", HOSTNAME: HOST_NAME,
-		PI_BRIDGE_MODEL_EXTENSION: modelRelay,
+		PI_BRIDGE_MODEL_EXTENSION: modelRelay, TMPDIR: SANDBOX_TEMP_DIR,
 	});
 	assert.deepEqual(buildIsolatedLaunch(options, { ...dependencies, env: {} }).env, {
 		PATH: "/run/pi-bin:/usr/bin:/bin:/usr/local/bin:/opt/local/bin", HOME: "/run/pi-home", LANG: "C.UTF-8", TERM: "dumb",
 		PI_TOOLSET_INNER: "1", PI_BRIDGE_GENERATE_ACCOUNTS: "1", PI_BRIDGE_SOCKET: sandboxSocket, PI_BRIDGE_TOKEN: "test-token",
 		PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0", PI_CODING_AGENT_DIR: "/run/pi-agent-private", HOSTNAME: HOST_NAME,
-		PI_BRIDGE_MODEL_EXTENSION: modelRelay,
+		PI_BRIDGE_MODEL_EXTENSION: modelRelay, TMPDIR: SANDBOX_TEMP_DIR,
 	});
 	if (hostname() !== HOST_NAME) assert.equal(JSON.stringify(plan).includes(hostname()), false, "the host name must not reach the sandbox");
 	for (const name of ["OPENAI_API_KEY", "NODE_OPTIONS", "HTTP_PROXY", "LD_PRELOAD", "PI_CODING_AGENT_DIR_HOST"]) {
 		assert.equal(name in plan.env, false, name);
 	}
+});
+
+test("the temp directory is private and stays writable below a read-only scope", () => {
+	const plan = buildIsolatedLaunch(options, { ...dependencies, env: { ...dependencies.env, TMPDIR: "/host/tmp" } });
+	assert.equal(plan.env.TMPDIR, SANDBOX_TEMP_DIR);
+	assert.equal(plan.env.TMPDIR.startsWith("/run/"), true);
+	assert.notEqual(plan.env.TMPDIR, "/host/tmp");
+	assert.equal(buildIsolatedLaunch({ ...options, filesystem: "off" }, dependencies).env.TMPDIR, undefined);
 });
 
 test("the token travels in the environment and never in argv", () => {
