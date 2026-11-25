@@ -52,7 +52,7 @@ Extension initialization and hooks run in the outer Pi with host access. The bou
 
 The executor loads discovered tool sources again inside the sandbox. Inner initialization and hooks can therefore run a second time. The two copies do not share memory. Host hooks, commands, and background work remain outside the boundary.
 
-A load failure or a missing declaration makes the affected tool unavailable. The executor never grants an exemption automatically. If you trust the tool and need host execution, add an exact-name pattern under Unsandboxed tools in `/permissions`.
+A load failure, a missing inner registration, or a hidden inner tool makes the affected tool unavailable. A tool that the inner registered but did not declare on this turn stays quiet, because an extension can add and remove a tool between turns. The executor never grants an exemption automatically. If you trust the tool and need host execution, add an exact-name pattern under Unsandboxed tools in `/permissions`.
 
 An ordinary tool error does not prove incompatibility. Tools that need host credentials, inherited environment variables, or custom terminal components can fail inside the sandbox.
 
@@ -144,7 +144,7 @@ The executor adapts the exported `ExtensionRunner.prototype.getAllRegisteredTool
 
 This adapter depends on Pi internals. Future Pi versions need runtime tests. A guard blocks unwrapped tools while a layer is on. SDK custom tools cannot use this adapter and remain blocked unless explicitly exempted.
 
-The inner inventory reports source paths without tool probes. A foreign tool needs a matching source and a declared tool name. A missing foreign override never uses an inner built-in with the same name.
+The inner inventory reports source paths and exposure without tool probes. A foreign tool needs a matching source. A tool counts as registered when the source matches and the inner exposure is not hidden, even if the inner left it out of the current model tool list. A missing foreign override never uses an inner built-in with the same name.
 
 The CLI can exit after an extension load failure. If its diagnostic names an exact requested path, the executor retries the launch once with the same list. A second failure drops that source and reports the reason. Other tools stay available. Unknown startup errors stop the executor.
 

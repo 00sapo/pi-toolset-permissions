@@ -5,7 +5,7 @@ export default function inventory(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (_event, ctx) => {
 		ctx.ui.notify(JSON.stringify({
 			piToolsetInventory: 1,
-			tools: pi.getAllTools().map(tool => ({ name: tool.name, sourceInfo: tool.sourceInfo })),
+			tools: pi.getAllTools().map(tool => ({ name: tool.name, sourceInfo: tool.sourceInfo, exposure: tool.exposure })),
 		}), "info");
 	});
 }

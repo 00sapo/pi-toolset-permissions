@@ -35,6 +35,19 @@ export function unavailable(name: string): string {
 	return `Sandbox tool ${name} is unavailable. Reload Pi after fixing the extension, or explicitly add an exact-name pattern under Unsandboxed tools.`;
 }
 
+/**
+ * True when the inner Pi registered this host tool from the same source and did not hide it.
+ * A tool that the inner registered but did not declare on this turn still counts. An extension
+ * can add and remove a tool between turns, as the pi-subagents loader does, and that is not an
+ * incompatibility. A hidden inner tool is never callable, so it stays absent.
+ */
+export function hasInnerRegistration(name: string, entry: { sourceInfo?: { path?: string } } | undefined,
+	inventory: ReadonlyMap<string, { path: string; exposure?: unknown }>, canonical = canonicalSource): boolean {
+	const expected = entry?.sourceInfo?.path;
+	const inner = inventory.get(name);
+	return Boolean(expected && inner && inner.exposure !== "hidden" && canonical(expected) === canonical(inner.path));
+}
+
 // Pi 1.5.2 has no public executor interception API. Keep the adapter in one place.
 // Each runtime finds its owner through a definition identity, never a global active session.
 const KEY = Symbol.for("pi-toolset-permissions.registry-adapter.v1");

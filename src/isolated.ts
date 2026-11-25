@@ -10,7 +10,7 @@ import { reportPrompts, suppressPrompts } from "./notify.ts";
 import { openPermissions } from "./ui.ts";
 import { statusLine } from "./status.ts";
 import { isExempt, layerKey, layersActive, ownPaths } from "./layers.ts";
-import { attachRegistryAdapter, concise, extensionSources, unavailable, canonicalSource } from "./forwarding.ts";
+import { attachRegistryAdapter, concise, extensionSources, unavailable, canonicalSource, hasInnerRegistration } from "./forwarding.ts";
 import { registerPermissionsTool } from "./tool.ts";
 import { Approvals } from "./approval.ts";
 import type { SandboxLayers } from "./layers.ts";
@@ -217,11 +217,15 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 				}
 				for (const [name, entry] of originals) {
 					const expected = entry.sourceInfo?.path;
-					const actual = started.runner.inventory.get(name);
+					const actual = started.runner.inventory.get(name)?.path;
 					if (!expected || !actual || canonicalSource(expected) !== canonicalSource(actual)) available.delete(name);
 				}
+				// An active name warns only when the inner cannot serve it: the registration is absent,
+				// names another source, or is hidden. A tool that the inner registered but left out of
+				// this turn's model list stays quiet, because an extension can toggle it between turns.
 				for (const name of originals.keys()) {
-					if (pi.getActiveTools().includes(name) && !available.has(name) && !store.get().unsandboxed_tools.some(pattern => isExempt(pattern, name))) {
+					if (pi.getActiveTools().includes(name) && !hasInnerRegistration(name, originals.get(name), started.runner.inventory)
+						&& !store.get().unsandboxed_tools.some(pattern => isExempt(pattern, name))) {
 						ctx.ui.notify(unavailable(name), "warning");
 					}
 				}

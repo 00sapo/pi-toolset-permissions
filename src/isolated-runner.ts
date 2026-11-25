@@ -31,10 +31,16 @@ export interface IsolatedRunnerOptions {
 	onUI?: (request: RpcRecord) => Promise<void | RpcRecord>;
 }
 
+/** One inner tool: its source file and the exposure that the inner Pi reported. */
+export interface InnerTool {
+	path: string;
+	exposure?: unknown;
+}
+
 /** One persistent inner Pi. Calls are serialized by the outer extension. */
 export class IsolatedRunner {
 	readonly bridge: PiToolBridge;
-	readonly inventory = new Map<string, string>();
+	readonly inventory = new Map<string, InnerTool>();
 	private child?: ChildProcessWithoutNullStreams;
 	private server: Server;
 	private directory?: string;
@@ -53,7 +59,7 @@ export class IsolatedRunner {
 						if (data.piToolsetInventory === 1 && Array.isArray(data.tools)) {
 							this.inventory.clear();
 							for (const tool of data.tools) {
-								if (typeof tool.name === "string" && typeof tool.sourceInfo?.path === "string") this.inventory.set(tool.name, tool.sourceInfo.path);
+								if (typeof tool.name === "string" && typeof tool.sourceInfo?.path === "string") this.inventory.set(tool.name, { path: tool.sourceInfo.path, exposure: tool.exposure });
 							}
 							return;
 						}

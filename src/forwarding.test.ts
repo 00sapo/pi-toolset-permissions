@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attachRegistryAdapter, concise, extensionRoot, extensionSources, unavailable } from "./forwarding.ts";
+import { attachRegistryAdapter, concise, extensionRoot, extensionSources, hasInnerRegistration, unavailable } from "./forwarding.ts";
 
 test("extension discovery deduplicates sources and excludes private and synthetic tools", () => {
 	const tools = ["/foreign/ext.ts", "/foreign/ext.ts", "/own/index.ts", "<sdk:test>", "builtin:mcp"].map(path => ({ sourceInfo: { path } }));
@@ -45,4 +45,23 @@ test("builtin extension discovery uses exact sources, not tool names", () => {
 		{ name: "other", sourceInfo: { path: "builtin:unknown" } },
 	];
 	assert.deepEqual(extensionSources(tools, [], [], "/project"), ["/third-party/codemode.ts", "builtin:codemode", "builtin:tool-search"]);
+});
+
+test("a tool that the inner registered counts even when it is absent this turn", () => {
+	const inventory = new Map([
+		["loader", { path: "/ext/loader.ts", exposure: "model-only" }],
+		["hidden", { path: "/ext/hidden.ts", exposure: "hidden" }],
+		["other", { path: "/ext/other.ts" }],
+		["builtin", { path: "builtin:read", exposure: "direct" }],
+	]);
+	const tool = (path: string) => ({ sourceInfo: { path } });
+	const canonical = (path: string) => path;
+	assert.equal(hasInnerRegistration("loader", tool("/ext/loader.ts"), inventory, canonical), true);
+	assert.equal(hasInnerRegistration("other", tool("/ext/other.ts"), inventory, canonical), true);
+	assert.equal(hasInnerRegistration("builtin", tool("builtin:read"), inventory, canonical), true);
+	assert.equal(hasInnerRegistration("hidden", tool("/ext/hidden.ts"), inventory, canonical), false);
+	assert.equal(hasInnerRegistration("loader", tool("/ext/elsewhere.ts"), inventory, canonical), false);
+	assert.equal(hasInnerRegistration("missing", tool("/ext/missing.ts"), inventory, canonical), false);
+	assert.equal(hasInnerRegistration("loader", undefined, inventory, canonical), false);
+	assert.equal(hasInnerRegistration("loader", { sourceInfo: {} }, inventory, canonical), false);
 });
