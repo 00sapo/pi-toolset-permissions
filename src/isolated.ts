@@ -160,6 +160,8 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 				await stopRunner();
 				let paths = sources(ctx);
 				let started: Awaited<ReturnType<typeof IsolatedRunner.start>>;
+				// A load failure can be transient. Retry each source once before dropping it.
+				const retried = new Set<string>();
 				for (;;) {
 					try {
 						started = await IsolatedRunner.start({
@@ -193,8 +195,12 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 						const message = error instanceof Error ? error.message : String(error);
 						const failed = paths.find(path => message.includes(`Failed to load extension "${path}":`));
 						if (!failed) throw error;
+						if (!retried.has(failed)) {
+							retried.add(failed);
+							continue;
+						}
 						paths = paths.filter(path => path !== failed);
-						ctx.ui.notify(`Sandbox extension unavailable: ${failed}. Fix its load error and reload Pi, or explicitly exempt its tools under Unsandboxed tools.`, "warning");
+						ctx.ui.notify(`Sandbox extension unavailable: ${failed}. ${concise(error)} Fix its load error and reload Pi, or explicitly exempt its tools under Unsandboxed tools.`, "warning");
 					}
 				}
 				// The layers can change while the process starts.

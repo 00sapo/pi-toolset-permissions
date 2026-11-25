@@ -146,7 +146,7 @@ This adapter depends on Pi internals. Future Pi versions need runtime tests. A g
 
 The inner inventory reports source paths without tool probes. A foreign tool needs a matching source and a declared tool name. A missing foreign override never uses an inner built-in with the same name.
 
-The CLI can exit after an extension load failure. If its diagnostic names an exact requested path, the executor retries without that source. Other tools stay available. Unknown startup errors stop the executor.
+The CLI can exit after an extension load failure. If its diagnostic names an exact requested path, the executor retries the launch once with the same list. A second failure drops that source and reports the reason. Other tools stay available. Unknown startup errors stop the executor.
 
 Inner-only direct declarations become outer delegates through `registerTool`. They have no host implementation and fail with layers off or an exemption. Hidden and deferred declarations are not promoted. Output schemas and custom rendering do not cross the declaration channel.
 
