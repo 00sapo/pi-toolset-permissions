@@ -148,3 +148,17 @@ test("late dialog rejection after cancellation is handled", async () => {
 	reject(new Error("Late failure"));
 	await new Promise(resolve => setImmediate(resolve));
 });
+
+
+test("subagent RPC snapshots clear the duplicate widget without touching native status", async () => {
+	const { ui, calls } = fakeUI();
+	for (const widgetLines of [["PI_SUBAGENT_ASYNC_JSON:{\"runs\":[]}"], undefined]) {
+		assert.equal(await forwardBridgeUI(request("setWidget", {
+			widgetKey: "subagent-async", widgetLines,
+		}), ui), undefined);
+		assert.deepEqual(calls.at(-1), {
+			method: "setWidget", args: ["isolated:subagent-async", undefined, { placement: "aboveEditor" }],
+		});
+	}
+	assert.equal(calls.length, 2);
+});

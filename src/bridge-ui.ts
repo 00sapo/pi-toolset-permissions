@@ -98,7 +98,11 @@ export async function forwardBridgeUI(
 			const lines = record.widgetLines === undefined ? undefined : stringArray(record.widgetLines, "widgetLines");
 			const placement = record.widgetPlacement === undefined ? "aboveEditor" : record.widgetPlacement;
 			if (placement !== "aboveEditor" && placement !== "belowEditor") throw new Error("Invalid UI request field: widgetPlacement");
-			effect = () => ui.setWidget(`isolated:${key}`, lines, { placement });
+			// pi-subagents emits a machine-readable snapshot in RPC mode. The
+			// host already renders these runs through its native status widget;
+			// forwarding the snapshot would display raw JSON underneath it.
+			// Clear the isolated copy as well, in case an older bridge mounted it.
+			effect = () => ui.setWidget(`isolated:${key}`, key === "subagent-async" ? undefined : lines, { placement });
 			break;
 		}
 		case "setTitle": {
