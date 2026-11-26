@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { hostname } from "node:os";
@@ -325,6 +326,44 @@ test("installed subagents use the parent model relay and gate child effects", {s
   assert.equal(approvals.length,1);
   assert.equal(approvals[0].toolName,'write');
   await assert.rejects(readFile(join(directory,'denied.txt')), {code:'ENOENT'});
+ } finally {await started.runner.close(); await rm(directory,{recursive:true,force:true});}
+});
+
+// pi-subagents compares the model of the child answer with the model that the caller asked
+// for. The relay serves one virtual model, so it must report that model and not the outer id.
+const subagentsEntry = join(process.env.HOME ?? "", ".pi/agent/npm/node_modules/pi-subagents/bundle/index.js");
+const subagentsSkip = liveSkip !== false
+ ? liveSkip
+ : (existsSync(subagentsEntry) ? false : "Install pi-subagents to run this test.");
+
+test("a sandboxed subagent keeps the relay model identity", {skip: subagentsSkip, timeout: 60_000}, async () => {
+ const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+ // A directory below the repository. The default temp directory can sit inside `/run`, which
+ // the sandbox owns, so the launcher would refuse it as the working directory.
+ const directory = await mkdtemp(join(cwd, '.live-subagent-'));
+ const agent = join(directory, 'agent');
+ const agentFile = join(agent, 'agents', 'probe.md');
+ await mkdir(join(agent, 'agents'), {recursive:true});
+ await writeFile(agentFile, "---\nname: probe\ndescription: Test child\ntools: read\n---\nFollow the task.");
+ let requests = 0;
+ const started = await IsolatedRunner.start({cwd:directory, extensions:[subagentsEntry], filesystem:'read+write', paths:[directory], network:true, piAgentDir:agent,
+  approve: async () => ({}),
+  streamModel: async function* (context) {
+   requests++;
+   const previous = context.messages.filter((m:any)=>m.role === 'toolResult');
+   // The outer session answers with its real model. The relay must not forward that id.
+   const message:any = {role:'assistant',api:'openai-completions',provider:'opencode-go',model:'deepseek-v4.1-flash',timestamp:Date.now(),usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason: previous.length ? 'stop' : 'toolUse',content:previous.length ? [{type:'text',text:'CHILD_FINISHED'}] : [{type:'toolCall',id:'child-read',name:'read',arguments:{path:agentFile}}]};
+   yield {type:'start',partial:message};
+   yield {type:'done',reason:message.stopReason,message};
+  },
+ });
+ try {
+  const response = await started.runner.execute('subagent',{agent:'probe',task:'Read the agent file.',model:'sandbox-parent/parent',async:false});
+  const output = text(response);
+  assert.equal(response.isError,false,output);
+  assert.match(output,/CHILD_FINISHED/);
+  assert.doesNotMatch(output,/model_verification_failed/);
+  assert.equal(requests,2);
  } finally {await started.runner.close(); await rm(directory,{recursive:true,force:true});}
 });
 
