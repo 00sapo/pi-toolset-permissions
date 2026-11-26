@@ -1,6 +1,6 @@
 {
 	"name": "pi-toolset-permissions",
-	"version": "0.2.6",
+	"version": "0.2.7",
 	"description": "Toolsets, path scope, and bash sandboxes for pi, with patterns that you can edit during a session",
 	"type": "module",
 	"license": "GPL-3.0-only",
