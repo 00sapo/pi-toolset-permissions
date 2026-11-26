@@ -34,6 +34,7 @@ function withTempDir(run: (dir: string) => void): void {
 
 test("defaults match the sketch", () => {
 	const state = defaultState();
+	assert.deepEqual(state.unsandboxed_tools, ["^subagents_enable$"]);
 	assert.equal(state.version, 4);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, []);
@@ -507,9 +508,12 @@ test("legacy default scope with extras preserves access", () => {
  assert.deepEqual(mergeState({ version: 3, scope: "project", extra_paths: ["/saved"] }).extra_paths, ["/saved"]);
 });
 
-test("empty and populated unsandboxed patterns survive normalization", () => {
- assert.deepEqual(checkPatterns([], true), { patterns: [] });
- assert.deepEqual(mergeState({ unsandboxed_tools: ["^host_tool$"] }).unsandboxed_tools, ["^host_tool$"]);
+test("only an absent exception list gets the shipped host exception", () => {
+	assert.deepEqual(checkPatterns([], true), { patterns: [] });
+	assert.deepEqual(mergeState({}).unsandboxed_tools, ["^subagents_enable$"]);
+	assert.deepEqual(mergeState({ unsandboxed_tools: [] }).unsandboxed_tools, []);
+	assert.deepEqual(mergeState({ unsandboxed_tools: ["^host_tool$"] }).unsandboxed_tools, ["^host_tool$"]);
+	assert.deepEqual(mergeState({ unsandboxed_tools: ["("] }).unsandboxed_tools, []);
 });
 
 test("root sessions start with defaults, resume persists, and children inherit policy", async () => {

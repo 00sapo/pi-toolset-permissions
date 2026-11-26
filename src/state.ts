@@ -81,7 +81,8 @@ export function defaultState(): PermissionsState {
 		extra_paths: [],
 		sandboxes: { filesystem: "off", no_network: false },
 		toolsets: builtinToolsets(),
-		unsandboxed_tools: [],
+		// Tool activation must change the outer Pi session's active tool list.
+		unsandboxed_tools: ["^subagents_enable$"],
 		sandbox_mounts: [],
 	};
 }
@@ -263,7 +264,9 @@ export function mergeState(raw: unknown): PermissionsState {
 		extra_paths: extras,
 		sandboxes: { ...defaults.sandboxes },
 		toolsets,
-		unsandboxed_tools: readUnsandboxedTools(source.unsandboxed_tools),
+		unsandboxed_tools: Object.hasOwn(source, "unsandboxed_tools")
+			? readUnsandboxedTools(source.unsandboxed_tools)
+			: defaults.unsandboxed_tools,
 		sandbox_mounts: readMounts(source.sandbox_mounts),
 	};
 
