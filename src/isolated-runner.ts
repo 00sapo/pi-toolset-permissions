@@ -26,7 +26,7 @@ export interface IsolatedRunnerOptions {
 	/** The host Pi agent directory. Undefined mounts none. */
 	piAgentDir?: string;
 	timeoutMs?: number;
-	streamModel?: (context: any, signal: AbortSignal) => AsyncIterable<any>;
+	streamModel?: (context: any, signal: AbortSignal, options?: any) => AsyncIterable<any>;
 	approve?: (event: any, signal: AbortSignal) => Promise<any>;
 	onUI?: (request: RpcRecord) => Promise<void | RpcRecord>;
 }

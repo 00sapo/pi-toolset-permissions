@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 /** An authenticated, fixed-model endpoint. Credentials remain in the outer Pi. */
 export async function handleModelRelay(req: IncomingMessage, res: ServerResponse, token: string,
-	stream: ((context: any, signal: AbortSignal) => AsyncIterable<any>) | undefined,
+	stream: ((context: any, signal: AbortSignal, options?: any) => AsyncIterable<any>) | undefined,
 	approve: ((event: any, signal: AbortSignal) => Promise<any>) | undefined): Promise<void> {
 	if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401); res.end(); return; }
 	if (req.method !== "POST") { res.writeHead(405); res.end(); return; }
@@ -18,9 +18,10 @@ export async function handleModelRelay(req: IncomingMessage, res: ServerResponse
 			res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(await approve(input, controller.signal))); return;
 		}
 		if (!stream) throw new Error("The parent model is unavailable.");
-		if (!input || !Array.isArray(input.messages)) throw new Error("Invalid model context.");
+		if (!input || !input.context || !Array.isArray(input.context.messages)) throw new Error("Invalid model context.");
+		if (input.options !== undefined && (!input.options || typeof input.options !== "object" || Array.isArray(input.options))) throw new Error("Invalid model options.");
 		res.setHeader("Content-Type", "application/x-ndjson");
-		for await (const event of stream(input, controller.signal)) res.write(JSON.stringify(event) + "\n");
+		for await (const event of stream(input.context, controller.signal, input.options)) res.write(JSON.stringify(event) + "\n");
 		res.end();
 	} catch (error) {
 		if (!res.headersSent) res.writeHead(400);

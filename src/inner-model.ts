@@ -21,7 +21,7 @@ export default function innerModel(pi: ExtensionAPI): void {
 	if (!endpoint || !token) throw new Error("The parent model relay is not configured.");
 	pi.registerProvider(RELAY_PROVIDER, {
 		api: RELAY_PROVIDER, apiKey: token, baseUrl: endpoint,
-		models: [{ id: RELAY_MODEL, name: "Parent model", api: RELAY_PROVIDER, reasoning: false,
+		models: [{ id: RELAY_MODEL, name: "Parent model", api: RELAY_PROVIDER, reasoning: true,
 			input: ["text", "image"], contextWindow: 128000, maxTokens: 16384,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
 		streamSimple: (_model: any, context: any, options: any) => {
@@ -30,7 +30,7 @@ export default function innerModel(pi: ExtensionAPI): void {
 				try {
 					const response = await fetch(endpoint + "/model", { method: "POST", headers: {
 						Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-						body: JSON.stringify(context), signal: options?.signal });
+						body: JSON.stringify({ context, options }), signal: options?.signal });
 					if (!response.ok || !response.body) throw new Error(await response.text());
 					let buffer = ""; const decoder = new TextDecoder();
 					for await (const chunk of response.body as any) {
