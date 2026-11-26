@@ -1,5 +1,6 @@
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { RELAY_MODEL, RELAY_PROVIDER, relayEvent } from "./relay-identity.ts";
 
 /**
  * Sessions that one loaded copy already gates. The command line loads this file in the
@@ -18,9 +19,9 @@ export default function innerModel(pi: ExtensionAPI): void {
 	const endpoint = process.env.PI_PARENT_MODEL_URL;
 	const token = process.env.PI_BRIDGE_TOKEN;
 	if (!endpoint || !token) throw new Error("The parent model relay is not configured.");
-	pi.registerProvider("sandbox-parent", {
-		api: "sandbox-parent", apiKey: token, baseUrl: endpoint,
-		models: [{ id: "parent", name: "Parent model", api: "sandbox-parent", reasoning: false,
+	pi.registerProvider(RELAY_PROVIDER, {
+		api: RELAY_PROVIDER, apiKey: token, baseUrl: endpoint,
+		models: [{ id: RELAY_MODEL, name: "Parent model", api: RELAY_PROVIDER, reasoning: false,
 			input: ["text", "image"], contextWindow: 128000, maxTokens: 16384,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
 		streamSimple: (_model: any, context: any, options: any) => {
@@ -38,7 +39,7 @@ export default function innerModel(pi: ExtensionAPI): void {
 						while ((newline = buffer.indexOf("\n")) !== -1) {
 							const event = JSON.parse(buffer.slice(0, newline)); buffer = buffer.slice(newline + 1);
 							if (event.relayError) throw new Error(event.relayError);
-							output.push(event);
+							output.push(relayEvent(event) as any);
 							if (event.type === "done" || event.type === "error") { output.end(); return; }
 						}
 					}
