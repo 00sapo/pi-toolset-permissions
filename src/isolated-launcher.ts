@@ -521,6 +521,10 @@ export function buildIsolatedLaunch(
 	const node = executable(options.nodePath ?? "node");
 	const relay = canonical(fileURLToPath(new URL("./inner-relay.mjs", import.meta.url)));
 	const modelRelay = canonical(modelRelayPath);
+	// The relay is mounted as one file, so every module that it imports needs its own mount.
+	// A sibling module that resolves inside the package would otherwise be missing whenever
+	// only the relay file is placed.
+	const modelRelaySupport = canonical(fileURLToPath(new URL("./relay-identity.ts", import.meta.url)));
 	const inventory = canonical(fileURLToPath(new URL("./inner-inventory.ts", import.meta.url)));
 	const workdir = canonical(resolve(options.cwd));
 	const extensions = options.extensions.map((path) => {
@@ -572,7 +576,7 @@ export function buildIsolatedLaunch(
 	for (const path of extensions.filter(path => !isBuiltinExtensionSource(path))) addMount(extensionRoot(path, exists), false);
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
-	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory, modelRelay]) addMount(path, false);
+	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory, modelRelay, modelRelaySupport]) addMount(path, false);
 	// `/etc` is mounted entry by entry. The account databases are generated instead of copied,
 	// so host user names and home paths do not enter the sandbox.
 	for (const entry of etcMounts(exists, options.etcFiles ?? ETC_FILES, options.etcDirectories ?? ETC_DIRECTORIES)) {

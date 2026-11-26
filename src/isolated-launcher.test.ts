@@ -24,6 +24,7 @@ const dependencies = {
 };
 const relay = fileURLToPath(new URL("./inner-relay.mjs", import.meta.url));
 const modelRelay = fileURLToPath(new URL("./inner-model.ts", import.meta.url));
+const modelRelaySupport = fileURLToPath(new URL("./relay-identity.ts", import.meta.url));
 const inventory = fileURLToPath(new URL("./inner-inventory.ts", import.meta.url));
 const sandboxSocket = "/run/pi-bridge/model.sock";
 
@@ -53,7 +54,7 @@ test("home, credentials, and other users stay out of the sandbox", () => {
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	// The relay file and the project are code and work data, and a project usually sits
 	// below /home. Every other path in that tree must stay out of the sandbox.
-	const allowed = new Set([relay, inventory, modelRelay, "/workspace/project", "/workspace/project/extension one.ts", "/usr/bin", "/opt/pi/bin"]);
+	const allowed = new Set([relay, inventory, modelRelay, modelRelaySupport, "/workspace/project", "/workspace/project/extension one.ts", "/usr/bin", "/opt/pi/bin"]);
 	for (const hidden of ["/home", "/root", "/mnt", "/media", "/srv", "/var"]) {
 		for (const bind of mounts(args)) {
 			if (allowed.has(bind.source)) continue;
@@ -70,7 +71,7 @@ test("only the system directories, the executables, the project, and the extensi
 	const { args } = buildIsolatedLaunch(options, dependencies);
 	assert.deepEqual(mounts(args).map((bind) => bind.source).sort(), [
 		"/etc/nsswitch.conf", "/etc/ssl/certs", "/opt/extensions", "/opt/pi/bin", "/opt/pi/bin/pi", "/usr", "/usr/bin",
-		"/usr/bin/node", relay, inventory, modelRelay, "/workspace/project", options.socketPath,
+		"/usr/bin/node", relay, inventory, modelRelay, modelRelaySupport, "/workspace/project", options.socketPath,
 	].sort());
 });
 
@@ -610,7 +611,7 @@ test("runtime binds never mask writable user roots, but read mode stays read-onl
   const {args} = buildIsolatedLaunch({...options,cwd:project,paths:[project],extensions:[],filesystem},dependencies);
   const found = mounts(args);
   assert.equal(found.find(m=>m.source === project)?.mode,filesystem === 'read' ? '--ro-bind':'--bind');
-  for(const runtime of [relay,inventory,modelRelay]) assert.equal(found.some(m=>m.source === runtime),false);
+  for(const runtime of [relay,inventory,modelRelay,modelRelaySupport]) assert.equal(found.some(m=>m.source === runtime),false);
  }
 });
 
