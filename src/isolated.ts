@@ -11,6 +11,8 @@ import { openPermissions } from "./ui.ts";
 import { statusLine } from "./status.ts";
 import { isExempt, layerKey, layersActive, ownPaths } from "./layers.ts";
 import { attachRegistryAdapter, concise, extensionSources, unavailable, canonicalSource, hasInnerRegistration } from "./forwarding.ts";
+import { RELAY_MODEL, RELAY_PROVIDER } from "./relay-identity.ts";
+import { resolveRelayTarget } from "./relay-target.ts";
 import { registerPermissionsTool } from "./tool.ts";
 import { Approvals } from "./approval.ts";
 import type { SandboxLayers } from "./layers.ts";
@@ -48,6 +50,8 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	let starting: Promise<void> | undefined;
 	let currentContext: ExtensionContext | undefined;
 	let currentSignal: AbortSignal | undefined;
+	/** The model that the running sandboxed call asked for, resolved against this host. */
+	let currentTarget: string | undefined;
 	let shadows: Map<string, Tool> | undefined;
 	let wired = false;
 	let registered = false;
@@ -174,9 +178,17 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 							piPath: pi.getFlag("inner-pi") as string | undefined,
 							nodePath: pi.getFlag("inner-node") as string | undefined,
 							piAgentDir: agentDirectory(),
-							streamModel: (context, signal) => {
-								if (!currentContext?.model) throw new Error("The parent model is unavailable.");
-								return currentContext.modelRegistry.streamSimple(currentContext.model, context, { signal });
+							streamModel: (context, signal, options) => {
+								const host = currentContext;
+								if (!host) throw new Error("The parent model is unavailable.");
+								// The sandbox selects the one relay model, and the caller still names the model
+								// that it wants. The host registry is the only side that resolves that name and
+								// holds its credentials, so the request runs here and no catalogue enters the sandbox.
+								const model = resolveRelayTarget(host.modelRegistry, currentTarget, host.model);
+								if (!model) throw new Error(`The requested model is unavailable: ${currentTarget ?? "unknown"}`);
+								// Authentication belongs to the host model registry, not the private relay.
+								const { apiKey: _apiKey, signal: _signal, ...forwarded } = options ?? {};
+								return host.modelRegistry.streamSimple(model, context, { ...forwarded, signal });
 							},
 							approve: async (event, signal) => {
 								if (!options.approve || !currentContext) return { block: true, reason: "The parent gate is unavailable." };
@@ -299,8 +311,13 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			if (signal?.aborted) throw new Error("Sandbox call cancelled.");
 			currentContext = ctx;
 			currentSignal = signal;
-			try { return await runIsolated(ctx, tool.name, tool.name === "subagent" ? { ...params, model: "sandbox-parent/parent" } : params, signal, onUpdate); }
-			finally { currentSignal = undefined; }
+			// A subagent names the model that it wants. The inner Pi only knows the relay model,
+			// so the request keeps that name for the child and this side remembers the real one.
+			currentTarget = tool.name === "subagent"
+				? (typeof params?.model === "string" ? params.model : undefined)
+				: undefined;
+			try { return await runIsolated(ctx, tool.name, tool.name === "subagent" ? { ...params, model: `${RELAY_PROVIDER}/${RELAY_MODEL}` } : params, signal, onUpdate); }
+			finally { currentSignal = undefined; currentTarget = undefined; }
 		});
 		serial = pending;
 		return pending;
