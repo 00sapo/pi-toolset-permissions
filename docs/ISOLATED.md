@@ -52,7 +52,9 @@ Extension initialization and hooks run in the outer Pi with host access. The bou
 
 The executor loads discovered tool sources again inside the sandbox. Inner initialization and hooks can therefore run a second time. The two copies do not share memory. Host hooks, commands, and background work remain outside the boundary.
 
-A load failure, a missing inner registration, or a hidden inner tool makes the affected tool unavailable. A tool that the inner registered but did not declare on this turn stays quiet, because an extension can add and remove a tool between turns. The executor never grants an exemption automatically. If you trust the tool and need host execution, add an exact-name pattern under Unsandboxed tools in `/permissions`.
+The shipped defaults exempt only `subagents_enable`. It runs on the host so it can activate `subagent` in the outer Pi session. The `subagent` tool itself is not exempt. If you already saved an exception list, Pi keeps it as is. You can add or remove `^subagents_enable$` under **Unsandboxed tools** in `/permissions`.
+
+A load failure, a missing inner registration, or a hidden inner tool makes the affected tool unavailable. A tool that the inner registered but did not declare on this turn stays quiet, because an extension can add and remove a tool between turns. The executor never adds an exemption in response to a failure. If you trust the tool and need host execution, add an exact-name pattern under Unsandboxed tools in `/permissions`.
 
 An ordinary tool error does not prove incompatibility. Tools that need host credentials, inherited environment variables, or custom terminal components can fail inside the sandbox.
 
