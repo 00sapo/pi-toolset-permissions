@@ -2,7 +2,8 @@ import { sandboxRoots } from "./scope.ts";
 import type { ExtensionAPI, ExtensionContext, Tool } from "@earendil-works/pi-coding-agent";
 import { createCodingTools, getAgentDir, ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
-import { realpathSync, statSync } from "node:fs";
+import { mkdirSync, realpathSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { IsolatedRunner } from "./isolated-runner.ts";
 import { forwardBridgeUI } from "./bridge-ui.ts";
 import { StateStore } from "./state.ts";
@@ -12,6 +13,7 @@ import { statusLine } from "./status.ts";
 import { isExempt, layerKey, layersActive, ownPaths } from "./layers.ts";
 import { attachRegistryAdapter, concise, extensionSources, unavailable, canonicalSource, hasInnerRegistration } from "./forwarding.ts";
 import { RELAY_MODEL, RELAY_PROVIDER } from "./relay-identity.ts";
+import { subagentsRunRoot } from "./subagents-root.ts";
 import { resolveRelayTarget } from "./relay-target.ts";
 import { registerPermissionsTool } from "./tool.ts";
 import { Approvals } from "./approval.ts";
@@ -178,6 +180,9 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 							piPath: pi.getFlag("inner-pi") as string | undefined,
 							nodePath: pi.getFlag("inner-node") as string | undefined,
 							piAgentDir: agentDirectory(),
+							// The host owns the run directory. The sandbox mounts the same path, so the
+							// fleet here and a run launched there never disagree about which runs exist.
+							subagentsRoot: sharedRunsDirectory(),
 							streamModel: (context, signal, options) => {
 								const host = currentContext;
 								if (!host) throw new Error("The parent model is unavailable.");
@@ -347,6 +352,16 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	}
 
 	function messageOf(error: unknown): string { return concise(error); }
+
+	/** The run directory that the host fleet reads, created once and shared with the sandbox. */
+	function sharedRunsDirectory(): string {
+		const root = subagentsRunRoot(process.env, {
+			tmpdir: tmpdir(),
+			uid: typeof process.getuid === "function" ? process.getuid() : undefined,
+		});
+		try { mkdirSync(root, { recursive: true }); } catch { /* A missing directory is reported at launch. */ }
+		return root;
+	}
 
 	function sources(ctx: ExtensionContext): string[] {
 		return extensionSources([...originals.values(), ...pi.getAllTools()], ownPath, extensionPaths(), ctx.cwd);

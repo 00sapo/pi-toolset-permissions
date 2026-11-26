@@ -26,6 +26,11 @@ export interface IsolatedLaunchOptions {
 	 * skills, prompts, themes, and packages become visible read-only. Undefined mounts none.
 	 */
 	piAgentDir?: string;
+	/**
+	 * The pi-subagents run directory. It is mounted writable and named in the sandbox
+	 * environment, so a run launched inside the sandbox is the run that the host lists.
+	 */
+	subagentsRoot?: string;
 	/** Overrides for tests. The defaults mount the entries that ordinary programs read. */
 	etcFiles?: readonly string[];
 	etcDirectories?: readonly string[];
@@ -577,6 +582,14 @@ export function buildIsolatedLaunch(
 	// The programs and their bin directories. A shell inside the sandbox must find them in
 	// PATH, for example when a tool starts `node` itself.
 	for (const path of [node, dirname(node), pi, dirname(pi), relay, inventory, modelRelay, modelRelaySupport]) addMount(path, false);
+	// A run launched inside the sandbox must land in the host's own run directory, or the
+	// host fleet cannot list, steer, or clean it up. The path is a data directory that the
+	// inner Pi owns, so it stays writable even when the filesystem layer is read-only.
+	if (options.subagentsRoot !== undefined) {
+		const shared = canonical(resolve(options.subagentsRoot));
+		addMount(shared, true);
+		env.PI_SUBAGENTS_TEMP_ROOT = shared;
+	}
 	// `/etc` is mounted entry by entry. The account databases are generated instead of copied,
 	// so host user names and home paths do not enter the sandbox.
 	for (const entry of etcMounts(exists, options.etcFiles ?? ETC_FILES, options.etcDirectories ?? ETC_DIRECTORIES)) {

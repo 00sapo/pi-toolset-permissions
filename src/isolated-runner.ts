@@ -25,6 +25,8 @@ export interface IsolatedRunnerOptions {
 	nodePath?: string;
 	/** The host Pi agent directory. Undefined mounts none. */
 	piAgentDir?: string;
+	/** The pi-subagents run directory that the sandbox shares with this host. */
+	subagentsRoot?: string;
 	timeoutMs?: number;
 	streamModel?: (context: any, signal: AbortSignal, options?: any) => AsyncIterable<any>;
 	approve?: (event: any, signal: AbortSignal) => Promise<any>;
@@ -99,6 +101,7 @@ export class IsolatedRunner {
 			cwd: this.options.cwd, extensions: this.options.extensions,
 			filesystem: this.options.filesystem, paths: this.options.paths, mounts: this.options.mounts, network: this.options.network,
 			piPath: this.options.piPath, nodePath: this.options.nodePath, piAgentDir: this.options.piAgentDir,
+			subagentsRoot: this.options.subagentsRoot,
 		});
 		const child = spawn(plan.command, plan.args, { cwd: this.options.cwd, env: plan.env, stdio: "pipe" });
 		this.child = child;

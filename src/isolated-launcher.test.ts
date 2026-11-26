@@ -725,3 +725,11 @@ test("a launch with no skipped path reports an empty list", () => {
 	const plan = buildIsolatedLaunch(options, dependencies);
 	assert.deepEqual(plan.skipped, []);
 });
+
+test("the pi-subagents run directory is shared writable and named in the environment", () => {
+ const root = "/tmp/pi-subagents-uid-1000";
+ const { args, env } = buildIsolatedLaunch({ ...options, subagentsRoot: root }, dependencies);
+ assert.equal(env.PI_SUBAGENTS_TEMP_ROOT, root);
+ const bind = mounts(args).find((entry) => entry.source === root);
+ assert.equal(bind?.mode, "--bind");
+});
