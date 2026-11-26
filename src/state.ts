@@ -46,6 +46,11 @@ const SHIPPED: ReadonlyArray<{ name: string; enabled: boolean; patterns: string[
 		],
 	},
 	{
+		name: "dev",
+		enabled: true,
+		patterns: ["^(git|ssh)$"],
+	},
+	{
 		// The delegation tools of pi-subagents. They are their own group, so a user can
 		// block delegation without turning off the file tools that a child also needs.
 		name: "subagent",
@@ -81,8 +86,9 @@ export function defaultState(): PermissionsState {
 		extra_paths: [],
 		sandboxes: { filesystem: "off", no_network: false },
 		toolsets: builtinToolsets(),
-		// Tool activation must change the outer Pi session's active tool list.
-		unsandboxed_tools: ["^subagents_enable$"],
+		// Activation needs the host session; Git and SSH use host credentials/config.
+		// Explicit saved lists remain authoritative, including an empty list.
+		unsandboxed_tools: ["^subagents_enable$", "^git$", "^ssh$"],
 		sandbox_mounts: [],
 	};
 }

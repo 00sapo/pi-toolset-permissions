@@ -3,10 +3,10 @@ import { test } from "node:test";
 import { decideCall, exemptTools, exemptionKey, foreignTools, isExempt, isOwnTool, layerKey, layersActive, ownPaths } from "./layers.ts";
 import { defaultState } from "./state.ts";
 
-test("the shipped exemption only routes subagent activation to the host", () => {
+test("the shipped exemptions route activation and packaged Git and SSH to the host", () => {
 	assert.deepEqual(
-		exemptTools(defaultState().unsandboxed_tools, ["subagents_enable", "subagent", "subagents_enable_extra", "bash"]),
-		["subagents_enable"],
+		exemptTools(defaultState().unsandboxed_tools, ["subagents_enable", "git", "ssh", "subagent", "git_extra", "ssh_extra", "subagents_enable_extra", "bash"]),
+		["subagents_enable", "git", "ssh"],
 	);
 });
 

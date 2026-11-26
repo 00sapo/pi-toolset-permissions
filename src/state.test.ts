@@ -34,7 +34,7 @@ function withTempDir(run: (dir: string) => void): void {
 
 test("defaults match the sketch", () => {
 	const state = defaultState();
-	assert.deepEqual(state.unsandboxed_tools, ["^subagents_enable$"]);
+	assert.deepEqual(state.unsandboxed_tools, ["^subagents_enable$", "^git$", "^ssh$"]);
 	assert.equal(state.version, 4);
 	assert.equal(state.scope, "project");
 	assert.deepEqual(state.extra_paths, []);
@@ -45,6 +45,7 @@ test("defaults match the sketch", () => {
 			["read", true, true],
 			["write", true, true],
 			["execute", true, true],
+			["dev", true, true],
 			["subagent", true, true],
 			["permissions", true, true],
 		],
@@ -74,7 +75,7 @@ test("mergeState repairs garbage", () => {
 	assert.deepEqual(state.extra_paths, ["/abs/one"]);
 	assert.deepEqual(state.sandboxes, { filesystem: "off", no_network: false });
 	assert.deepEqual(state.sandbox_mounts, []);
-	assert.equal(state.toolsets.length, 5);
+	assert.equal(state.toolsets.length, 6);
 });
 
 test("mergeState keeps valid recognized fields", () => {
@@ -97,7 +98,7 @@ test("mergeState drops a toolset with an invalid regex", () => {
 	});
 	assert.deepEqual(
 		state.toolsets.map((toolset) => toolset.name),
-		["read", "write", "execute", "subagent", "permissions", "good"],
+		["read", "write", "execute", "dev", "subagent", "permissions", "good"],
 	);
 });
 
@@ -110,7 +111,7 @@ test("mergeState drops custom toolsets with bad fields", () => {
 			"nope",
 		],
 	});
-	assert.equal(state.toolsets.length, 5);
+	assert.equal(state.toolsets.length, 6);
 });
 
 test("mergeState drops duplicate toolset names", () => {
@@ -185,7 +186,7 @@ for (const enabled of [false, true] as const) {
 		});
 		assert.equal(state.toolsets.some((toolset) => toolset.name === "permission"), false);
 		assert.equal(state.toolsets.filter((toolset) => toolset.name === "permissions").length, 1);
-		assert.equal(state.toolsets.length, 5);
+		assert.equal(state.toolsets.length, 6);
 	});
 }
 
@@ -197,7 +198,7 @@ for (const legacyFirst of [false, true]) {
 		assert.deepEqual(state.toolsets.find((toolset) => toolset.name === "permissions"), canonical);
 		assert.equal(state.toolsets.some((toolset) => toolset.name === "permission"), false);
 		assert.equal(state.toolsets.filter((toolset) => toolset.name === "permissions").length, 1);
-		assert.equal(state.toolsets.length, 5);
+		assert.equal(state.toolsets.length, 6);
 	});
 }
 
@@ -222,7 +223,7 @@ test("mergeState accepts junk input", () => {
 		const state = mergeState(raw);
 		assert.equal(state.version, 4);
 		assert.equal(state.scope, "project");
-		assert.equal(state.toolsets.length, 5);
+		assert.equal(state.toolsets.length, 6);
 	}
 });
 
@@ -510,7 +511,7 @@ test("legacy default scope with extras preserves access", () => {
 
 test("only an absent exception list gets the shipped host exception", () => {
 	assert.deepEqual(checkPatterns([], true), { patterns: [] });
-	assert.deepEqual(mergeState({}).unsandboxed_tools, ["^subagents_enable$"]);
+	assert.deepEqual(mergeState({}).unsandboxed_tools, ["^subagents_enable$", "^git$", "^ssh$"]);
 	assert.deepEqual(mergeState({ unsandboxed_tools: [] }).unsandboxed_tools, []);
 	assert.deepEqual(mergeState({ unsandboxed_tools: ["^host_tool$"] }).unsandboxed_tools, ["^host_tool$"]);
 	assert.deepEqual(mergeState({ unsandboxed_tools: ["("] }).unsandboxed_tools, []);
@@ -653,4 +654,15 @@ test("session binding never writes into a read-only agent directory", () => {
    if(oldFile === undefined) delete process.env.PI_PERMISSIONS_FILE; else process.env.PI_PERMISSIONS_FILE=oldFile;
   }
  });
+});
+
+
+test("packaged Git and SSH default to dev and host exceptions without changing saved lists", () => {
+	const state = defaultState();
+	for(const name of ["git","ssh"]) {
+		assert.deepEqual(state.toolsets.filter(t => t.patterns.some(p => new RegExp(p).test(name))).map(t => t.name), ["dev"]);
+		assert.ok(state.unsandboxed_tools.includes(`^${name}$`));
+	}
+	assert.deepEqual(mergeState({unsandboxed_tools:[]}).unsandboxed_tools,[]);
+	assert.deepEqual(mergeState({unsandboxed_tools:["^forge_cli$"]}).unsandboxed_tools,["^forge_cli$"]);
 });

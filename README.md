@@ -15,7 +15,8 @@ The AI can request state changes when the `permissions` toolset is on. Turn that
 
 ## Main features
 
-- Five toolsets: `read`, `write`, `execute`, `subagent`, and `permissions`.
+- Six toolsets: `read`, `write`, `execute`, `dev`, `subagent`, and `permissions`.
+- Packaged `git` and `ssh` tools, with removable host-execution defaults.
 - Compatibility with `pi-subagent` and `herdr`.
 - The LLM can ask you to change the permissions and set your preferred profile.
 - Third-party tools sandboxed automatically on Linux.
@@ -49,6 +50,41 @@ Then open the screen with `/permissions`.
 
 Sandboxes automatically mount all the paths listed in your PATH env variable, your home's `.gitconfig`
 and your `.profile`. Other paths can be added through the UI or asking to the LLM.
+
+### Git and SSH tools
+
+**Host access:** new configurations run `git` and `ssh` outside the sandbox, even when network access is forbidden there. They use host credentials and configuration. Git aliases, hooks, credential helpers, forge extensions, and SSH proxy commands can start local programs. The program names are not a security boundary.
+
+The tools belong to the `dev` toolset: off blocks them and ask requests approval. New defaults include the removable exceptions `^git$` and `^ssh$`. Existing saved lists and toolset patterns stay unchanged. To enable host execution in an existing profile, add those exact patterns under **Unsandboxed tools** and make sure a toolset allows both names. On Linux, removing an exception routes subsequent calls through the sandbox. Existing host SSH connections remain active until stopped or the session closes; stop them before changing the exception.
+
+`git` replaces the personal `forge_cli` experiment; it does not remove that separate extension. Its `program` accepts `git` (the default), `gh`, or `tea`. Supply individual arguments, not a shell command. It inherits credentials, has a 60-second default timeout (maximum 600), and captures at most 1 MiB. Commits, pushes, destructive Git operations and issue changes still require user consent; the tool does not grant it.
+
+```json
+{"args":["status","--short"]}
+{"program":"gh","args":["pr","list"],"timeout":30}
+```
+
+`ssh` uses the installed OpenSSH client, the user's SSH config, keys, agent and known_hosts. It preserves host-key verification. It uses noninteractive authentication and does not open a terminal or ask for passwords. A host not already trusted must be set up outside this tool. Managed execution disables background forking and connection multiplexing; other SSH configuration still applies. Remote commands follow the remote shell's quoting rules.
+
+| Action | Result |
+|---|---|
+| `run` (default) | Wait for a command to finish; timeout defaults to 60 seconds. |
+| `start` | Return a managed connection ID; no lifetime limit unless `timeout` is set. A receipt does not prove authentication or port readiness. |
+| `list` | List this session's retained connections without their output. |
+| `status` | Read a connection's state and bounded output by `id`. |
+| `stop` | Close the connection and its local process group by `id` on Unix. |
+
+```json
+{"args":["server-alias","uname -a"]}
+{"action":"start","args":["-N","-L","8080:localhost:80","server-alias"]}
+{"action":"start","args":["-N","-D","1080","-J","jump-alias","server-alias"]}
+{"action":"status","id":"<returned-id>"}
+{"action":"stop","id":"<returned-id>"}
+```
+
+Native arguments also support remote forwarding (`-R`) and stdio forwarding (`-W`). There is no interactive stdin channel. SSH retains at most 16 active connections and 64 process records per session, with a rolling 1 MiB output buffer per process. Explicit timeouts range from 1 to 600 seconds. Both tools display at most 2000 lines or 50 KB. Session shutdown and `/reload` close managed SSH connections; IDs do not survive reload. Remote jobs may outlive a disconnected SSH client. On Windows, cleanup targets the SSH process; Unix process-group cleanup is not available.
+
+The package loads both tool definitions automatically. Loading only `src/index.ts` directly does not load them: use the package directory or also pass `-e ./src/host-tools.ts`.
 
 ### Async subagents in Fleet
 
