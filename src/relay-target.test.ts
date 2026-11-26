@@ -32,10 +32,15 @@ test("the host resolves the requested model without any catalogue in the sandbox
 	assert.deepEqual(resolveRelayTarget(registry, "openai-codex/gpt-6.2-sol:max", fallback), models["openai-codex/gpt-6.2-sol"]);
 });
 
-test("an absent, unqualified, or unknown reference keeps the host fallback", () => {
+test("an absent reference inherits the session model", () => {
 	const fallback = { provider: "alias", id: "parent-fallback" };
 	assert.equal(resolveRelayTarget(registry, undefined, fallback), fallback);
-	assert.equal(resolveRelayTarget(registry, "low", fallback), fallback);
-	assert.equal(resolveRelayTarget(registry, "alias/missing", fallback), fallback);
+	assert.equal(resolveRelayTarget(registry, "   ", fallback), fallback);
+});
+
+test("a named reference that cannot be resolved is not replaced by another model", () => {
+	const fallback = { provider: "alias", id: "parent-fallback" };
+	assert.equal(resolveRelayTarget(registry, "low", fallback), undefined);
+	assert.equal(resolveRelayTarget(registry, "alias/missing", fallback), undefined);
 	assert.equal(resolveRelayTarget(registry, "alias/low", undefined), models["alias/low"]);
 });

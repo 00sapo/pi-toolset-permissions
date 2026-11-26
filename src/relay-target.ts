@@ -24,17 +24,18 @@ interface ModelLookup<Model> {
 }
 
 /**
- * The host model for a requested reference, or the fallback when the reference is
- * absent, unqualified, or unknown to this host. An unknown model is reported by the
- * caller through its normal error path, so this returns the fallback instead of
- * throwing inside a stream.
+ * The host model for a requested reference. An absent reference keeps the fallback,
+ * because inheriting the session model is the normal case. A reference that is named
+ * but cannot be resolved returns undefined: the caller reports it, so a typo never
+ * becomes a silent run on a different model.
  */
 export function resolveRelayTarget<Model>(
 	registry: ModelLookup<Model>,
 	ref: string | undefined,
 	fallback: Model | undefined,
 ): Model | undefined {
+	if (ref?.trim() === undefined || ref?.trim() === "") return fallback;
 	const parsed = parseModelRef(ref);
-	if (!parsed?.provider) return fallback;
-	return registry.find(parsed.provider, parsed.id) ?? fallback;
+	if (!parsed?.provider) return undefined;
+	return registry.find(parsed.provider, parsed.id);
 }
