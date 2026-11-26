@@ -50,6 +50,12 @@ Then open the screen with `/permissions`.
 Sandboxes automatically mount all the paths listed in your PATH env variable, your home's `.gitconfig`
 and your `.profile`. Other paths can be added through the UI or asking to the LLM.
 
+### Async subagents in Fleet
+
+On Linux, sandboxed async runs share their run directory with the host. A stable inner session ID links their ownership to the host session, so Fleet can find them after an executor restart. The host transcript stays outside the sandbox. `subagent` remains sandboxed.
+
+This integration uses a private ownership registry tested with `pi-subagents` 0.90. Changes to that package may require an adapter update. It does not add host Fleet rows for synchronous foreground children or repair async notification delivery. Runs created before this fix keep their old ownership; use a new run to check visibility after `/reload`.
+
 ## Concept
 
 A toolset is a group of tool names. Each toolset has one state: off, on, or ask.

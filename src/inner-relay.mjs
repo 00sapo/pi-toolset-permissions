@@ -22,6 +22,7 @@ async function main() {
  await mkdir("/run/pi-bin", { recursive: true });
  // A writable temp directory. A read-only scope can bind the host `/tmp` over the private one.
  const tempDir = process.env.TMPDIR;
+ const subagentsRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
  if (tempDir) await mkdir(tempDir, { recursive: true });
  await Promise.all([
   symlink(pi, "/run/pi-bin/pi").catch(() => {}),
@@ -98,6 +99,10 @@ async function main() {
    PI_PARENT_MODEL_URL: `http://127.0.0.1:${address.port}`,
    PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", PI_TELEMETRY: "0",
    ...(tempDir ? { TMPDIR: tempDir } : {}),
+   // The host names the pi-subagents run directory and mounts it writable, so the inner
+   // Pi must forward that name or pi-subagents falls back to a TMPDIR path that the host
+   // cannot see. Without it a run started here never appears in the host fleet.
+   ...(subagentsRoot ? { PI_SUBAGENTS_TEMP_ROOT: subagentsRoot } : {}),
   };
   const child = spawn(pi, args, { stdio: "inherit", env });
   let signalCount = 0;

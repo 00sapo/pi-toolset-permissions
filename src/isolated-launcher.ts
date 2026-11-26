@@ -31,6 +31,8 @@ export interface IsolatedLaunchOptions {
 	 * environment, so a run launched inside the sandbox is the run that the host lists.
 	 */
 	subagentsRoot?: string;
+	/** Stable, opaque identity for the in-memory sandbox session. No host session file. */
+	sessionId?: string;
 	/** Overrides for tests. The defaults mount the entries that ordinary programs read. */
 	etcFiles?: readonly string[];
 	etcDirectories?: readonly string[];
@@ -483,6 +485,9 @@ export function buildIsolatedLaunch(
 	if (!options.token || /[\x00-\x20\x7f]/.test(options.token)) {
 		throw new Error("The bridge token must be nonempty and contain no whitespace or control bytes.");
 	}
+	if (options.sessionId !== undefined && !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(options.sessionId)) {
+		throw new Error("sessionId must be a valid Pi session ID.");
+	}
 	if (typeof options.network !== "boolean") throw new Error("network must be a boolean.");
 	if (!["off", "read", "read+write"].includes(options.filesystem)) throw new Error("Invalid filesystem mode.");
 	if (!Array.isArray(options.paths)) throw new Error("paths must be an array.");
@@ -758,6 +763,7 @@ export function buildIsolatedLaunch(
 		relay, pi,
 		"--mode", "rpc",
 		"--no-session",
+		...(options.sessionId ? ["--session-id", options.sessionId] : []),
 		"--provider", "bridge",
 		"--model", "bridge",
 		"--thinking", "off",

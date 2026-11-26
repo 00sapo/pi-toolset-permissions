@@ -733,3 +733,18 @@ test("the pi-subagents run directory is shared writable and named in the environ
  const bind = mounts(args).find((entry) => entry.source === root);
  assert.equal(bind?.mode, "--bind");
 });
+
+test("a host-selected sandbox session id reaches Pi without mounting a host session", () => {
+	const sessionId = "pi-sandbox-" + "a".repeat(64);
+	const plain = buildIsolatedLaunch(options, dependencies);
+	const linked = buildIsolatedLaunch({ ...options, sessionId }, dependencies);
+	assert.ok(linked.args.includes("--no-session"));
+	const index = linked.args.lastIndexOf("--session-id");
+	assert.notEqual(index, -1);
+	assert.equal(linked.args[index + 1], sessionId);
+	assert.deepEqual(mounts(linked.args), mounts(plain.args));
+	assert.deepEqual(linked.env, plain.env);
+	for (const invalid of ["", "../host.jsonl", "--other", "a\0b", "a b"]) {
+		assert.throws(() => buildIsolatedLaunch({ ...options, sessionId: invalid }, dependencies), /sessionId/);
+	}
+});

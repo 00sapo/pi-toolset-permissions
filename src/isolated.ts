@@ -14,6 +14,7 @@ import { isExempt, layerKey, layersActive, ownPaths } from "./layers.ts";
 import { attachRegistryAdapter, concise, extensionSources, unavailable, canonicalSource, hasInnerRegistration } from "./forwarding.ts";
 import { RELAY_MODEL, RELAY_PROVIDER } from "./relay-identity.ts";
 import { subagentsRunRoot } from "./subagents-root.ts";
+import { linkSandboxSession, sandboxSessionId, unlinkSandboxSessions } from "./subagents-session.ts";
 import { resolveRelayTarget } from "./relay-target.ts";
 import { registerPermissionsTool } from "./tool.ts";
 import { Approvals } from "./approval.ts";
@@ -141,7 +142,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	function configurationKey(ctx: ExtensionContext, layers: SandboxLayers): string {
 		// A mount change starts a new process, so it belongs to the key.
 		const mounts = layers.filesystem === "off" ? [] : store.get().sandbox_mounts.map((entry) => `${entry.path}:${entry.writable}`);
-		return JSON.stringify([layerKey(layers, layers.filesystem === "off" ? [] : allowedRoots(ctx)), sources(ctx), [...mounts].sort()]);
+		return JSON.stringify([sandboxSessionId(ctx.sessionManager), layerKey(layers, layers.filesystem === "off" ? [] : allowedRoots(ctx)), sources(ctx), [...mounts].sort()]);
 	}
 
 	/** The running executor for these layers. It starts one if the combination needs it. */
@@ -154,6 +155,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 			status(undefined);
 			return undefined;
 		}
+		const sessionId = sandboxSessionId(ctx.sessionManager);
 		const key = configurationKey(ctx, layers);
 		if (runner && runnerKey === key) return runner;
 		if (starting) {
@@ -183,6 +185,7 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 							// The host owns the run directory. The sandbox mounts the same path, so the
 							// fleet here and a run launched there never disagree about which runs exist.
 							subagentsRoot: sharedRunsDirectory(),
+							sessionId,
 							streamModel: (context, signal, options) => {
 								const host = currentContext;
 								if (!host) throw new Error("The parent model is unavailable.");
@@ -288,7 +291,10 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 	/** A layer is on, so a missing executor is an error and never a fallback to the host. */
 	async function runIsolated(ctx: ExtensionContext, name: string, args: unknown, signal: AbortSignal | undefined, onUpdate: ((update: unknown) => void) | undefined) {
 		let active: IsolatedRunner | undefined;
-		try { active = await ensureRunner(ctx, { ...store.get().sandboxes }); }
+		try {
+			linkSandboxSession(ctx.sessionManager);
+			active = await ensureRunner(ctx, { ...store.get().sandboxes });
+		}
 		catch (error) { throw new Error(`Sandbox startup failed: ${concise(error)}`); }
 		if (!active) throw new Error("The isolated executor is unavailable. Fix the reported startup error and retry.");
 		if (!available.has(name)) throw new Error(unavailable(name));
@@ -431,7 +437,14 @@ export function install(pi: ExtensionAPI, options: IsolatedOptions): void {
 		pi.setActiveTools(pi.getActiveTools().length ? pi.getActiveTools() : pi.getAllTools().filter((tool) => tool.sourceInfo.source === "builtin").map((tool) => tool.name));
 	});
 
+	// All session_start hooks have finished here, including pi-subagents resetting
+	// its succession registry on startup. Dispatch also restores the link if needed.
+	pi.on("resources_discover", (_event, ctx) => {
+		linkSandboxSession(ctx.sessionManager);
+	});
+
 	pi.on("session_shutdown", async () => {
+		unlinkSandboxSessions();
 		await (starting ?? Promise.resolve());
 		await stopRunner();
 		currentContext = undefined;
