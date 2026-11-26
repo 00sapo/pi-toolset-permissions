@@ -23,3 +23,15 @@ test('model relay forwards context and serializable stream options', async () =>
   assert.deepEqual(received, {context, options, aborted:false});
  } finally { server.close(); await once(server,'close'); }
 });
+
+test('permission relay preserves sandbox explanation metadata', async () => {
+ let received:any;
+ const server=createServer((req,res)=>void handleModelRelay(req,res,'token',undefined,async event=>{received=event;return {};}));
+ server.listen(0,'127.0.0.1'); await once(server,'listening');
+ try {
+ const address=server.address(); if(!address || typeof address==='string')throw new Error('missing address');
+ const event={toolName:'read',toolCallId:'child-call',input:{path:'config.ts'},approvalReason:'Read child configuration to diagnose its error.'};
+ const response=await fetch(`http://127.0.0.1:${address.port}/permissions`,{method:'POST',headers:{authorization:'Bearer token','content-type':'application/json'},body:JSON.stringify(event)});
+ assert.equal(response.status,200); await response.text(); assert.deepEqual(received,event);
+ } finally {server.close();await once(server,'close');}
+});

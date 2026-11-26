@@ -14,7 +14,7 @@ import { openPermissions } from "./ui.ts";
 import { install } from "./isolated.ts";
 import { reportPrompts, suppressPrompts } from "./notify.ts";
 import { layersEnabled, platformPolicy } from "./platform.ts";
-import { callReason } from "./reason.ts";
+import { permissionReason, relayedReason } from "./reason.ts";
 import {
 	claimSession,
 	dropChild,
@@ -44,14 +44,6 @@ function escapeRegex(value: string): string {
 function clipReason(reason: string): string {
 	if (reason.length <= MAX_REASON) return reason;
 	return `${reason.slice(0, MAX_REASON - 3)}...`;
-}
-
-function approvalReason(ctx: ExtensionContext, tool: string, input: Record<string, unknown>): string {
-	try {
-		return callReason(ctx.sessionManager.getBranch(), tool, input);
-	} catch {
-		return callReason([], tool, input);
-	}
 }
 
 function toolsetName(store: StateStore, toolName: string): string {
@@ -172,7 +164,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 		});
 
 		const isolated = platformPolicy().plan === "isolated";
-		if (isolated) install(pi, { registerPermissionsCommand: true, store, approvals, approve: (event, ctx) => gateCall(event, ctx) });
+		if (isolated) install(pi, { registerPermissionsCommand: true, store, approvals, approve: (event, ctx) => gateCall(event, ctx, relayedReason(event)) });
 		if (!isolated) {
 		// Bash is one tool. When a sandbox is on, run the command inside the OS boundary.
 		const bashDefinition = createBashTool(process.cwd());
@@ -242,7 +234,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 
 		}
 
-		async function gateCall(event: any, ctx: ExtensionContext) {
+		async function gateCall(event: any, ctx: ExtensionContext, forwardedReason?: string) {
 			// Another copy of this extension already gates this session.
 			if (passive) return undefined;
 			const input = event.input as unknown as Record<string, unknown>;
@@ -269,7 +261,7 @@ export default function permissionsExtension(pi: ExtensionAPI): void {
 						bindApproval();
 						return undefined;
 					}
-					const answer = await approvals.request(store, event.toolName, input, approvalReason(ctx, event.toolName, input), ctx);
+					const answer = await approvals.request(store, event.toolName, input, forwardedReason ?? permissionReason(ctx, event.toolName, input), ctx);
 					store.reload();
 					const current = evaluateCall(store.get(), event.toolName, input, ctx.cwd);
 					if (current.block && current.kind !== "ask") return { block: true, reason: current.reason };

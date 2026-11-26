@@ -1,5 +1,6 @@
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { permissionReason } from "./reason.ts";
 import { RELAY_MODEL, RELAY_PROVIDER, relayEvent } from "./relay-identity.ts";
 
 /**
@@ -75,7 +76,7 @@ export default function innerModel(pi: ExtensionAPI): void {
 		if (!owns || owners().get(ctx.sessionManager.getSessionId()) !== owner) return undefined;
 		if (rootSession === process.env.PI_PARENT_RELAY_ROOT && /^bridge_[^/]+$/.test(event.toolCallId)) return;
 		const response = await fetch(endpoint + "/permissions", { method: "POST", headers: {
-			Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(event), signal: ctx.signal });
+			Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...event, approvalReason: permissionReason(ctx, event.toolName, event.input) }), signal: ctx.signal });
 		if (!response.ok) return { block: true, reason: "The parent permission gate is unavailable." };
 		return await response.json();
 	});

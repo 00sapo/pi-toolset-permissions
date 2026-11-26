@@ -40,8 +40,9 @@ test("the Linux entry point installs the approval gate for every tool", async (t
 	const handlers = new Map<string, Function>();
 	const tools = new Map<string, any>();
 	let answer = "Block";
+	let title = "";
 	const ctx = { cwd, hasUI: true, mode: "rpc", sessionManager: { getSessionId: () => "ask-root", getBranch: () => [] }, ui: {
-		setStatus() {}, select: async () => answer, input: async () => undefined,
+		setStatus() {}, select: async (text: string) => { title = text; return answer; }, input: async () => undefined,
 	} };
 	t.after(async () => {
 		await handlers.get("session_shutdown")?.({}, ctx);
@@ -65,6 +66,16 @@ test("the Linux entry point installs the approval gate for every tool", async (t
 		assert.equal(decision?.block, true, tool);
 		assert.match(decision.reason, /denied/i);
 	}
+	// Sandbox metadata wins over an unrelated host explanation, including when absent.
+	const hostCtx = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [
+		{ type: "message", message: { role: "assistant", content: "Unrelated host explanation" } },
+	] } };
+	await installed.approve({ toolName: "read", toolCallId: "sandbox-reason", input: { path: join(cwd, "child.txt") }, approvalReason: "Inspect child configuration to diagnose the error." }, hostCtx);
+	assert.match(title, /Inspect child configuration/);
+	assert.doesNotMatch(title, /Unrelated host/);
+	await installed.approve({ toolName: "read", toolCallId: "sandbox-no-reason", input: { path: join(cwd, "child.txt") } }, hostCtx);
+	assert.match(title, /did not provide a specific reason/);
+	assert.doesNotMatch(title, /Unrelated host/);
 	// The isolated path asks through the same gate, and an off toolset stays closed.
 	assert.equal((store.get().toolsets.find((entry) => entry.name === "read")!.enabled), "ask");
 	const off = await installed.approve({ toolName: "read", toolCallId: "off", input: { path: join(cwd, "a.txt") } }, ctx);

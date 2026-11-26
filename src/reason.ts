@@ -14,6 +14,7 @@ function textOf(content: unknown): string {
 export function callReason(branch: MessageEntry[], tool: string, input: Record<string, unknown>): string {
 	let task = "";
 	let explanation = "";
+	let explanationWindow = true;
 	let sawAssistant = false;
 	for (let index = branch.length - 1; index >= 0; index -= 1) {
 		const entry = branch[index];
@@ -22,9 +23,16 @@ export function callReason(branch: MessageEntry[], tool: string, input: Record<s
 			task = textOf(entry.message.content);
 			break;
 		}
-		if (entry.message.role === "assistant" && !sawAssistant) {
+		if (entry.message.role === "toolResult") explanationWindow = false;
+		if (entry.message.role === "assistant" && explanationWindow && !explanation) {
+			const content = entry.message.content;
+			// Earlier tool calls belong to another action, even if their result is absent.
+			if (sawAssistant && Array.isArray(content) && content.some(part => part?.type === "toolCall")) {
+				explanationWindow = false;
+			} else {
+				explanation = textOf(content);
+			}
 			sawAssistant = true;
-			explanation = textOf(entry.message.content);
 		}
 	}
 	if (explanation) return explanation;
@@ -35,4 +43,16 @@ export function callReason(branch: MessageEntry[], tool: string, input: Record<s
 		: `Use the tool ${tool}.`;
 	const excerpt = task.length > 600 ? `${task.slice(0, 600)} [...]` : task;
 	return `${action}\nThis agent did not provide a specific reason for this call.${excerpt ? `\nCurrent task: ${excerpt}` : ""}`;
+}
+
+/** Forward public text only, never the sandbox conversation or private thinking. */
+export function permissionReason(ctx: { sessionManager: { getBranch(): MessageEntry[] } }, tool: string, input: Record<string, unknown>): string {
+	try { return callReason(ctx.sessionManager.getBranch(), tool, input); }
+	catch { return callReason([], tool, input); }
+}
+
+/** Missing relay metadata must never fall back to an unrelated host conversation. */
+export function relayedReason(event: { approvalReason?: unknown; toolName: string; input: Record<string, unknown> }): string {
+	return typeof event.approvalReason === "string" && event.approvalReason.trim()
+		? event.approvalReason : callReason([], event.toolName, event.input);
 }
