@@ -154,7 +154,7 @@ Inner-only direct declarations become outer delegates through `registerTool`. Th
 
 The network layer with `FORBID CONNECTIONS` removes IP access.
 
-Two relays connect the sandbox to one host Unix socket each. The tool bridge carries scripted model requests for the executor. The model relay serves one fixed model, `sandbox-parent/parent`, from the outer session, so a subagent keeps the outer credentials: no API key enters the sandbox. The same relay answers permission questions from a child session, and the outer gate decides them.
+Two relays connect the sandbox to one host Unix socket each. The tool bridge carries scripted model requests for the executor. The model relay serves one fixed model, `sandbox-parent/parent`, from the outer session, so a subagent keeps the outer credentials: no API key enters the sandbox. Every assistant message that the relay forwards names that model, because a delegated tool can compare the answer model with the model that it requested. pi-subagents does so, and the outer id would fail its check. The same relay answers permission questions from a child session, and the outer gate decides them.
 
 Both relays are local process communication endpoints. The host server accepts only the scripted tool request, a model request from the private provider, and a permission question. It does not forward arbitrary network traffic.
 

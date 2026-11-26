@@ -104,6 +104,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 - Treat the `permissions` toolset as binary. It is on or off. Ask would ask the user twice for one change, once in the gate and once in the tool dialog.
 - Treat a link inside the project as a project path. The project contains the link, so the gate accepts a path through it before link resolution. A direct path to the link target still needs an allowed root. Extra roots keep canonical containment, because the user names those directories explicitly.
 - Fail closed. A missing backend or a broken gate blocks the call.
+- Report the relay model on every forwarded answer. The relay serves one virtual model, and a delegated tool can compare the answer model with the model that it asked for. pi-subagents fails a child that reports another id, so the outer id never leaves the host.
 - Place a protected path instead of failing the launch. A protected path arrives without a user action. A virtual environment links its interpreter to `/usr/bin/python3.13`, and a package manager links a shim into `/usr`. One rule answers every case. A path below a read-only system tree is already visible. A path inside `/etc` or `/run`, which the sandbox mounts empty, goes back in view through one read-only bind. A whole private tree and a pseudo filesystem path are reported and left out. A fatal error would stop every tool in the session.
 - Refuse a whole private tree at the dialog, not at launch. The user can choose a subdirectory and the sandbox binds it. A stored entry that cannot be placed is dropped at load, so a stale file never breaks a session. A clear refusal at the point of choice is better than a silent failure at launch.
 - Follow Pi's prompt events instead of reporting each dialog by hand. Pi already announces every blocking dialog and merges nested ones, so one listener covers the approval dialog, the unknown-tool question, and the change confirmations. A report that the host misses never blocks the dialog.
@@ -127,6 +128,7 @@ Every edit returns a new list or an error. `appendPattern` refuses a duplicate a
 | `src/patterns.ts` | Pure edits of a pattern list, and the tool names that a pattern matches |
 | `src/ui.ts` | The `/permissions` screen, the pattern editor, the mounts list, and the defaults row |
 | `src/sessions.ts` | Cross-session registry: session claims, child links, ask forwarding |
+| `src/relay-identity.ts` | The model identity that the inner relay reports on every forwarded answer |
 | `src/notify.ts` | Reports a waiting question to the terminal host through `herdr:blocked` |
 
 ## Custom mounts
