@@ -9,11 +9,11 @@
 export const RELAY_PROVIDER = "sandbox-parent";
 export const RELAY_MODEL = "parent";
 
-function relabel(value: unknown): unknown {
+function relabel(value: unknown, provider: string, model: string): unknown {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
 	const message = value as Record<string, unknown>;
 	if (message.role !== "assistant") return value;
-	return { ...message, api: RELAY_PROVIDER, provider: RELAY_PROVIDER, model: RELAY_MODEL };
+	return { ...message, api: provider, provider, model };
 }
 
 /** Copy one streamed assistant event with the relay identity on the messages it carries. */
@@ -22,7 +22,7 @@ export function relayEvent<T>(event: T): T {
 	const record = event as Record<string, unknown>;
 	const copy: Record<string, unknown> = { ...record };
 	for (const key of ["message", "partial", "error"]) {
-		if (record[key] !== undefined) copy[key] = relabel(record[key]);
+		if (record[key] !== undefined) copy[key] = relabel(record[key], RELAY_PROVIDER, RELAY_MODEL);
 	}
 	return copy as T;
 }
