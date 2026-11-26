@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decideCall, exemptTools, exemptionKey, foreignTools, isExempt, isOwnTool, layerKey, layersActive, ownPaths } from "./layers.ts";
+import { defaultState } from "./state.ts";
+
+test("the shipped exemption only routes subagent activation to the host", () => {
+	assert.deepEqual(
+		exemptTools(defaultState().unsandboxed_tools, ["subagents_enable", "subagent", "subagents_enable_extra", "bash"]),
+		["subagents_enable"],
+	);
+});
 
 test("no layer means no executor and no interception", () => {
 	const layers = { filesystem: "off" as const, no_network: false };
