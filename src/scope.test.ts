@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
+import { fixtureTmpdir as tmpdir } from "../tests/helpers/temp.ts";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { canonicalPath, isAllowedPath, resolveDirectory, isInside, resolvePath, stripAt } from "./scope.ts";

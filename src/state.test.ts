@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs, { mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { fixtureTmpdir as tmpdir } from "../tests/helpers/temp.ts";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -571,7 +571,7 @@ test("root sessions start with defaults, resume persists, and children inherit p
 test("custom mounts repair, cap, and drop paths the sandbox owns", async () => {
  const { mkdtempSync, mkdirSync, realpathSync } = await import("node:fs");
  const { join } = await import("node:path");
- const { tmpdir } = await import("node:os");
+ const { fixtureTmpdir: tmpdir } = await import("../tests/helpers/temp.ts");
  const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-mounts-")));
  try {
   const real = join(dir, "data"); mkdirSync(real);
@@ -607,7 +607,7 @@ test("custom mounts repair, cap, and drop paths the sandbox owns", async () => {
 test("saving the defaults writes the template and leaves the session file alone", async () => {
  const { mkdtempSync, readFileSync } = await import("node:fs");
  const { join } = await import("node:path");
- const { tmpdir } = await import("node:os");
+ const { fixtureTmpdir: tmpdir } = await import("../tests/helpers/temp.ts");
  const oldAgent = process.env.PI_CODING_AGENT_DIR;
  const oldFile = process.env.PI_PERMISSIONS_FILE;
  const dir = mkdtempSync(join(tmpdir(), "pi-defaults-"));

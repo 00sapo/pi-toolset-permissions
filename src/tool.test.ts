@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { tmpdir } from "node:os";
+import { fixtureTmpdir as tmpdir } from "../tests/helpers/temp.ts";
 import { join } from "node:path";
 import test from "node:test";
 import { Approvals } from "./approval.ts";

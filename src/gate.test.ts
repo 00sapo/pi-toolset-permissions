@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { fixtureTmpdir as tmpdir } from "../tests/helpers/temp.ts";
 import { join } from "node:path";
 import test from "node:test";
 import { evaluateCall } from "./gate.ts";

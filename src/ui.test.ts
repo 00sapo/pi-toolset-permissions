@@ -330,7 +330,7 @@ test("scope UI cycles all modes without reactivating or deleting saved paths", a
 
 
 test("adding a path asks before activating inactive saved extras", async () => {
- const { tmpdir } = await import("node:os");
+ const { fixtureTmpdir: tmpdir } = await import("../tests/helpers/temp.ts");
  const { canonicalPath } = await import("./scope.ts");
  const f = await screenFixture("project");
  const saved = [...f.state().extra_paths];
