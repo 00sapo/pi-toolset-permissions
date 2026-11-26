@@ -147,7 +147,7 @@ A session with no file of its own reads the template when it exists and the ship
 
 ## State
 
-The defaults are the read toolset on, the write toolset off, the execute toolset on, the `permissions` toolset on, project scope, no extra paths, and both sandboxes off. The exception list is empty, so every tool stays inside the boundary.
+The shipped state starts with project scope, no extra paths, and both sandboxes off. The shipped exception list contains only `^subagents_enable$`, so the activation tool can change the outer Pi session. A saved exception list replaces the shipped list, even when it is empty.
 
 State version 3 adds custom scope. Project scope exposes only the project root. Custom scope also exposes saved extra paths.
 
