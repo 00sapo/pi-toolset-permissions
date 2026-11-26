@@ -62,7 +62,10 @@ export function statusText(
 		`sandboxes: filesystem=${state.sandboxes.filesystem} network=${networkLabel(state.sandboxes.no_network).toLowerCase()}`,
 	);
 	const policy = platformPolicy(platform);
-	lines.push(`sandbox coverage: ${policy.coverage}`);
+	const coverage = policy.plan === "isolated" && state.unsandboxed_tools.length > 0
+		? "Every tool runs inside the sandbox except unsandboxed tools."
+		: policy.coverage;
+	lines.push(`sandbox coverage: ${coverage}`);
 	if (policy.reason !== undefined) lines.push(`sandbox status: ${policy.reason}`);
 	lines.push(`unsandboxed tools: ${state.unsandboxed_tools.length === 0 ? "none" : state.unsandboxed_tools.join(", ")}`);
 	lines.push(`custom mounts: ${state.sandbox_mounts.length === 0 ? "none" : state.sandbox_mounts.map((mount) => `${mount.path} (${mount.writable ? "read-write" : "read-only"})`).join(", ")}`);

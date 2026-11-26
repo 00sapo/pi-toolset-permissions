@@ -91,6 +91,7 @@ test("the report names the unsandboxed tools", () => {
 	state.unsandboxed_tools = ["^my_tool$", "^other_"];
 	const report = statusText(state, "all-tools", "linux");
 	assert.match(report, /unsandboxed tools: \^my_tool\$, \^other_/);
+	assert.match(report, /sandbox coverage: .* except unsandboxed tools/);
 });
 
 test("status distinguishes active roots from saved extras for every scope", () => {
